@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 05d7f4305..04deef812 100644
+index 05d7f4305..e517c65a2 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
 @@ -676,13 +676,53 @@ static enum ggml_metal_device_id ggml_metal_device_id_parse(const char * name) {
@@ -139,17 +139,81 @@ index 05d7f4305..04deef812 100644
      }
  }
  
-@@ -1799,6 +1882,15 @@ bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml
+@@ -1799,6 +1882,79 @@ bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml
          return true;
      }
  
-+    // ollama-metal: a Metal blit requires both buffers on the SAME physical
-+    // MTLDevice. When src and dst live on different discrete dies (multi-die
-+    // layer split), bail out so ggml_backend_tensor_copy uses its host-mediated
-+    // fallback (malloc -> get_tensor(src) -> set_tensor(dst)). Stock assumes a
-+    // single UMA device so it always blits.
++    // ollama-metal: a Metal blit normally requires both buffers on the SAME
++    // physical MTLDevice. When src and dst live on different discrete dies
++    // (multi-die layer split) we have two paths:
++    //
++    //   (Phase C, DEFAULT) host-mediated copy: bail out so
++    //   ggml_backend_tensor_copy uses its fallback (malloc -> get_tensor(src) ->
++    //   set_tensor(dst), bounce-buffered). Correct on any topology.
++    //
++    //   (Phase D, OPT-IN via GGML_METAL_PEER_ENABLE) direct peer-to-peer blit
++    //   over AMD Infinity Fabric Link: all four W6800X dies report an identical
++    //   non-zero peerGroupID, so we can blit across them by wrapping the source
++    //   buffer in a remote buffer view usable on the destination device
++    //   (newRemoteBufferViewForDevice:). The raw transfer is ~9x faster (~26 vs
++    //   ~3 GB/s for 256 MB), BUT measured end-to-end inference shows no speedup:
++    //   layer-split cross-die copies are tiny (residual stream, ~10-20 KB/token)
++    //   and the small split overhead is submission/sync latency, not copy
++    //   bandwidth. So this path is kept inert unless explicitly enabled (e.g.
++    //   for copy-heavy splits, experimentation, or future workloads). NOTE: you
++    //   cannot blit a peer's private buffer directly (Metal lets the call
++    //   "succeed" but copies garbage); the remote view is mandatory.
++    //
++    // Stock assumes a single UMA device so it always blits.
 +    if (buf_src->dev->mtl_device != buf_dst->dev->mtl_device) {
-+        return false;
++        id<MTLDevice> dev_src = buf_src->dev->mtl_device;
++        id<MTLDevice> dev_dst = buf_dst->dev->mtl_device;
++
++        // host-mediated fallback (Phase C) unless the peer path is opted in AND
++        // both dies share a Metal peer group (Infinity Fabric link present).
++        if (getenv("GGML_METAL_PEER_ENABLE") == NULL ||
++            dev_src.peerGroupID == 0 || dev_src.peerGroupID != dev_dst.peerGroupID) {
++            return false;
++        }
++
++        // Phase D: direct peer-to-peer blit over Infinity Fabric
++        @autoreleasepool {
++            struct ggml_metal_buffer_id bid_src = ggml_metal_buffer_get_id(buf_src, src);
++            struct ggml_metal_buffer_id bid_dst = ggml_metal_buffer_get_id(buf_dst, dst);
++
++            if (bid_src.metal == nil || bid_dst.metal == nil) {
++                return false;
++            }
++
++            // remote view of the SOURCE buffer, usable on the DESTINATION device;
++            // the blit is then issued on the destination device's queue. "new..."
++            // returns a +1 retained object that we must release.
++            id<MTLBuffer> remote_src = [(id<MTLBuffer>)bid_src.metal newRemoteBufferViewForDevice:dev_dst];
++            if (remote_src == nil) {
++                return false; // peer view unavailable -> host-mediated fallback
++            }
++
++            id<MTLCommandBuffer> cmd_buf = [buf_dst->dev->mtl_queue commandBufferWithUnretainedReferences];
++
++            {
++                id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
++
++                [encoder copyFromBuffer:remote_src
++                           sourceOffset:bid_src.offs
++                               toBuffer:bid_dst.metal
++                      destinationOffset:bid_dst.offs
++                                   size:size];
++
++                [encoder endEncoding];
++            }
++
++            [cmd_buf commit];
++            [cmd_buf waitUntilCompleted];
++
++            [remote_src release];
++        }
++
++        return true;
 +    }
 +
      // for private buffers, we need to use Metal blit commands

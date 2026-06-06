@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 32d97cd5d..209f1e15e 100644
+index 32d97cd5d..94eed0e3b 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -134,7 +134,22 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
@@ -26,21 +26,24 @@ index 32d97cd5d..209f1e15e 100644
  
      {
          const char * val = getenv("GGML_METAL_GRAPH_DEBUG");
-@@ -394,6 +409,23 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
+@@ -394,6 +409,26 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
  
  bool ggml_metal_cpy_tensor_async(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, const struct ggml_tensor * src, struct ggml_tensor * dst) {
      @autoreleasepool {
-+        // ollama-metal: a Metal blit encoder can only copy between buffers that
-+        // belong to the SAME physical MTLDevice. The stock async blit below
-+        // assumes every Metal "device" is the same UMA GPU (true on Apple
-+        // Silicon), but on discrete multi-die cards (e.g. dual W6800X Duo = 4
-+        // separate GPUs) the source and destination live in different VRAMs and
-+        // a cross-device blit is invalid -> garbage / failure. When the two
-+        // contexts are on different physical devices, return false so the
-+        // ggml-backend layer falls back to its host-mediated copy (get_tensor
-+        // from src -> host -> set_tensor to dst), which is correct on discrete
-+        // GPUs (and uses the bounce-buffered set/get path). This is what makes
-+        // cross-die layer-split of >32 GB models work.
++        // ollama-metal: the stock async blit below assumes every Metal "device"
++        // is the same UMA GPU (true on Apple Silicon). On discrete multi-die
++        // cards (e.g. dual W6800X Duo = 4 separate GPUs) the source and
++        // destination live in different VRAMs, and this async path also relies
++        // on a cross-device event signal/wait that the stock code wires up for a
++        // single UMA queue. Rather than reimplement async cross-device ordering,
++        // we return false for any cross-device copy. ggml_backend_tensor_copy
++        // then falls back to the SYNCHRONOUS ggml_metal_buffer_cpy_tensor, which
++        // does the right thing per topology:
++        //   - default: host-mediated bounce copy (Phase C); or
++        //   - GGML_METAL_PEER_ENABLE + same Metal peer group (Infinity Fabric)
++        //     -> direct peer-to-peer blit via a remote buffer view (Phase D,
++        //     opt-in; correct but no measured inference speedup, see device.m).
++        // Either way cross-die layer-split of >32 GB models stays correct.
 +        id<MTLDevice> mtl_src = ggml_metal_device_get_obj(ctx_src->dev);
 +        id<MTLDevice> mtl_dst = ggml_metal_device_get_obj(ctx_dst->dev);
 +        if (mtl_src != mtl_dst) {

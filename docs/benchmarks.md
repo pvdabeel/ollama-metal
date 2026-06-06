@@ -75,20 +75,36 @@ spread/split path.
 
 A single model can be split across dies (`-sm layer` / `OLLAMA_SCHED_SPREAD=1`),
 so models larger than one die's 32 GB run by using up to ~128 GB across 4 dies.
-Cross-die tensor transfers are host-mediated (a Metal blit cannot cross physical
-`MTLDevice`s), so throughput is PCIe-bound, not compute-bound.
+Cross-die tensor transfers are host-mediated by default (a Metal blit cannot
+cross physical `MTLDevice`s unless you use a peer remote view, see Phase D).
 
-| Split (devstral 14B Q4)              | dies        | gen t/s |
-|--------------------------------------|-------------|--------:|
-| single die (one model per die)       | 1           |    ~95* |
-| forced 2-die (`-ts 0,0,1,1`)         | MTL2 + MTL3 |    21.5 |
-| Ollama spread (`OLLAMA_SCHED_SPREAD`)| MTL0..MTL3  |    18.9 |
+**Methodology caveat (important):** raw `llama-server` defaults to **mmap on**,
+which on a discrete GPU streams weights over PCIe every token and floors *every*
+config at ~3 t/s — masking compute *and* any cross-die cost. Always pass
+`--no-mmap` (Ollama does this automatically via the sched patch). An earlier
+revision of this table compared an mmap'd raw split (~20 t/s) against a no-mmap
+single-die number and wrongly concluded the split was "4-5x slower, PCIe-bound".
+The corrected, consistent (`--no-mmap`) numbers below show the split overhead is
+actually small.
 
-*single-die rate is model-dependent; devstral is a 14B dense model.
+devstral (18.5 GB blob), `--no-mmap`, raw `llama-server`, gen t/s @ temp 0:
 
-All splits produce coherent output (verified). Use cross-die split only for
-models that do not fit one die — it trades ~4-5x throughput for capacity. For
-models that fit one die, prefer one-model-per-die (full speed, see above).
+| Split                                  | dies        | host (default) | peer (`GGML_METAL_PEER_ENABLE`) |
+|----------------------------------------|-------------|---------------:|--------------------------------:|
+| single die (no split)                  | 1           |           75.3 |                             —   |
+| forced 2-die (`-ts 0,0,1,1`)           | MTL2 + MTL3 |           70.3 |                            70.1 |
+| 4-way (`-ts 1,1,1,1`)                  | MTL0..MTL3  |           60.4 |                            60.6 |
+
+All splits produce coherent output (verified). Takeaways:
+- Split overhead is modest: ~75 → ~70 (2-die) → ~60 (4-way) t/s. The trade buys
+  capacity up to ~128 GB; use it only for models that do not fit one die.
+- **Phase D (Infinity Fabric peer copy) is a tie with the host path** at every
+  split (70.1 vs 70.3; 60.6 vs 60.4). The fabric copy is ~9x faster as a raw
+  256 MB transfer (~26 vs ~3 GB/s) but layer-split moves only the residual
+  stream (~10-20 KB/token), so the split cost is submission/sync latency, not
+  bandwidth. Phase D is kept opt-in (`GGML_METAL_PEER_ENABLE`); default is the
+  host path. There is no Ollama/llama.cpp flag for Infinity Fabric.
+- For models that fit one die, prefer one-model-per-die (full speed, see above).
 
 ## Reference points from upstream (iRon-Llama README)
 

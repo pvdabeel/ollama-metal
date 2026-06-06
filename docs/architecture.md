@@ -89,17 +89,33 @@ Ollama's Go, and a small, separate Ollama patch for discovery/build.
 - Phase C (done): cross-die layer split for single models >32 GB. The only
   change needed was correctness: `ggml_metal_cpy_tensor_async` and
   `ggml_metal_buffer_cpy_tensor` issue a Metal blit between the src and dst
-  buffers, which is invalid across two physical `MTLDevice`s. Both now return
-  false when the devices differ, so ggml-backend uses its host-mediated copy
-  (`get_tensor` src -> host -> `set_tensor` dst, both same-device blits via the
-  bounce-buffered path). ggml-sched then splits layers across dies normally
+  buffers, which is invalid across two physical `MTLDevice`s by default. Both now
+  return false when the devices differ, so ggml-backend uses its host-mediated
+  copy (`get_tensor` src -> host -> `set_tensor` dst, both same-device blits via
+  the bounce-buffered path). ggml-sched then splits layers across dies normally
   (`-sm layer`); Ollama routes here automatically when a model does not fit one
   die (`bestGPUGroupByAvailableMemory`) or when `OLLAMA_SCHED_SPREAD=1`.
-  Validated coherent on a forced 2-die split and an Ollama 4-die spread.
-  Throughput is host/PCIe-bound (cross-die copies serialize at layer
-  boundaries): ~20 t/s on a 14B model split 4 ways — the trade for fitting
-  models up to ~128 GB. Single-die and one-model-per-die paths never hit this
-  code (no cross-device copies), so they keep full speed.
+  Validated coherent on a forced 2-die split and an Ollama 4-die spread. The
+  split overhead is small (NOT PCIe-bandwidth-bound as first assumed): with
+  weights resident in VRAM (`--no-mmap`), devstral 24B runs ~75 t/s single-die
+  vs ~70 t/s on a 2-die layer split. The cross-die copy is only the residual
+  stream (~10-20 KB/token), so the ~1 ms/token cost is submission/sync latency.
+  The trade buys capacity up to ~128 GB. Single-die and one-model-per-die paths
+  never hit this code (no cross-device copies), so they keep full speed.
+- Phase D (done, opt-in): Infinity Fabric peer copy. All four dies share one
+  Metal peer group (`peerGroupID`, `peerCount=4`), so the cross-die copy can go
+  directly over the AMD Infinity Fabric Link via a remote buffer view
+  (`newRemoteBufferViewForDevice:`) rather than through the host. Verified
+  correct and ~9x faster as a raw transfer (~26 vs ~3 GB/s for 256 MB), but it
+  gives **no measurable inference speedup** (70.1 peer vs 70.3 host t/s on the
+  2-die split) because the per-token cross-die payload is tiny and the overhead
+  is latency, not bandwidth. So `ggml_metal_buffer_cpy_tensor` only takes the
+  peer path when `GGML_METAL_PEER_ENABLE` is set; default stays Phase C.
 
-Non-UMA means there is no fast peer-to-peer path between dies; tensor-parallel
-speedup is not feasible. Multi-die is for capacity and concurrent throughput.
+Correction to an earlier assumption: there IS a fast peer-to-peer path between
+dies (Infinity Fabric peer group, Phase D), but it does not help layer-split
+inference, and llama.cpp Metal does not do tensor-parallel (`-sm row`) across
+discrete dies, so a tensor-parallel speedup is still not realized. Multi-die is
+for capacity and concurrent throughput. There is no Ollama/llama.cpp flag for
+Infinity Fabric (stock P2P knobs are CUDA-only); Phase D is the only way it is
+exercised here.

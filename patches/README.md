@@ -37,10 +37,23 @@ validated 3 different models served concurrently on 3 dies. See
 
 **Phase C complete** — cross-die layer split for single models >32 GB. The
 Metal backend's cross-device tensor copies are host-mediated on discrete dies
-(a Metal blit cannot cross physical `MTLDevice`s), so `-sm layer` /
+(a Metal blit cannot cross physical `MTLDevice`s by default), so `-sm layer` /
 `OLLAMA_SCHED_SPREAD` splits a model across dies correctly (validated coherent
-on a forced 2-die and an Ollama 4-die spread). Throughput is host/PCIe-bound
-(~20 t/s on a 14B split), the trade for capacity up to ~128 GB.
+on a forced 2-die and an Ollama 4-die spread). The split overhead is small:
+~75 t/s single-die vs ~70 t/s on a 2-die layer split (devstral 24B, weights
+resident in VRAM), the trade for capacity up to ~128 GB.
+
+**Phase D (opt-in, not a perf win)** — Infinity Fabric peer copy. All four
+W6800X dies share one Metal peer group (`peerGroupID`, `peerCount=4`), so
+cross-die copies can go directly over the AMD Infinity Fabric Link via a remote
+buffer view (`newRemoteBufferViewForDevice:`) instead of through the host.
+Verified correct and ~9x faster as a raw transfer (~26 vs ~3 GB/s for 256 MB),
+**but it yields no measurable inference speedup** (70.1 peer vs 70.3 host t/s on
+the 2-die split): layer-split cross-die copies are tiny (residual stream,
+~10-20 KB/token) so the small split overhead is submission/sync latency, not
+copy bandwidth. Kept inert by default; enable with `GGML_METAL_PEER_ENABLE` for
+copy-heavy splits or experimentation. (There is no Ollama or llama.cpp flag for
+Infinity Fabric; the only stock P2P knobs are CUDA-specific.)
 
 `patches/llama-cpp/`:
 - `01-metal-context-concurrency-and-cross-die.patch` (`ggml-metal-context.m`):
@@ -49,17 +62,19 @@ on a forced 2-die and an Ollama 4-die spread). Throughput is host/PCIe-bound
     intermediate tensors on discrete AMD GPUs (every op passes
     `test-backend-ops` individually).
   - **cross-die copy.** `ggml_metal_cpy_tensor_async` returns false when src and
-    dst are on different physical `MTLDevice`s (a Metal blit cannot cross
-    devices), so ggml falls back to a host-mediated copy. Required for
-    multi-die layer split.
+    dst are on different physical `MTLDevice`s (the async path also relies on a
+    single-device event signal/wait), so ggml falls back to the synchronous
+    `ggml_metal_buffer_cpy_tensor`. Required for multi-die layer split.
 - `02-metal-discrete-device.patch` — **device adaptations** (`ggml-metal-device.m`):
   Mac2 reduction caps (no-op on W6800X, helps older discrete GPUs); bounce-buffer
   fallback in `set_tensor`/`get_tensor` for unaligned host pointers (stock
   asserts + aborts on discrete GPUs); **multi-die selection** — `device_init`
   binds the ggml device to `MTLCopyAllDevices()[idx]` (idx from the ggml slot or
-  `GGML_METAL_DEVICE_INDEX`) instead of always the system default device; and a
-  **cross-die guard** in `ggml_metal_buffer_cpy_tensor` (same blit-cross-device
-  rule as above for the buffer-level copy path).
+  `GGML_METAL_DEVICE_INDEX`) instead of always the system default device; and the
+  **cross-die copy** in `ggml_metal_buffer_cpy_tensor`: host-mediated by default
+  (Phase C), or — when `GGML_METAL_PEER_ENABLE` is set and both dies share a
+  Metal peer group — a direct Infinity Fabric peer blit via a remote buffer view
+  (Phase D, opt-in, see status above).
 - `03-metal-tiled-mul-mm.patch` — **perf (optional).** Threadgroup-tiled
   `mul_mm`/dispatch for non-UMA; ~12x faster prompt eval. NOT required for
   correctness (stock `mul_mv` is numerically correct here too).
