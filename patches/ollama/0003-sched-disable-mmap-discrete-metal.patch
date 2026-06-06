@@ -1,0 +1,24 @@
+diff --git a/server/sched.go b/server/sched.go
+index be1b222b..d3c115b6 100644
+--- a/server/sched.go
++++ b/server/sched.go
+@@ -1166,6 +1166,19 @@ func disableMmapDefaultReason(goos string, opts api.Options, gpus []ml.DeviceInf
+ 	if goos == "windows" && hasDeviceLibrary(gpus, "cuda") {
+ 		return "windows_cuda"
+ 	}
++	// ollama-metal: on macOS a DISCRETE GPU (e.g. AMD Radeon Pro W6800X on an
++	// Intel Mac Pro) is always a Metal device with NON-unified memory. With
++	// mmap on, llama.cpp wraps the mmap'd weight file in host-visible Metal
++	// buffers (MTL*_Mapped), so the GPU streams every weight over PCIe on each
++	// token -- crippling generation (measured: 1.6 t/s with mmap vs 61 t/s
++	// without on llama3.2). Disabling mmap makes the weights load into private
++	// VRAM. Apple Silicon GPUs are Integrated (UMA) so hasDiscreteGPU is false
++	// there and mmap stays on (free + saves memory). NOTE: gating here on goos
++	// rather than the Metal library string because on Intel macOS the device's
++	// DeviceID.Library carries the GPU name, not "Metal".
++	if goos == "darwin" && hasDiscreteGPU(gpus) {
++		return "metal_discrete"
++	}
+ 	if hasDeviceLibrary(gpus, "metal") {
+ 		if opts.NumGPU > 0 && blockCount > 0 && uint64(opts.NumGPU) < blockCount+1 {
+ 			return "metal_partial_offload"

@@ -26,5 +26,30 @@ Never edit `work/` trees in place and commit them; capture changes here.
 
 ## Status
 
-Empty until Phase A. The proven kernels to port live in
+**Phase A complete** — correct + fast inference on the AMD Radeon Pro W6800X
+(Intel Mac Pro), automatic by default. See `../docs/pa-port.md` for the full
+root-cause analysis (the original wave64 theory was disproven by measurement).
+
+`patches/llama-cpp/`:
+- `01-metal-concurrency-off-nonuma.patch` — **correctness.** Default
+  `use_concurrency = false` on non-UMA (discrete) Metal devices. The backend's
+  concurrent command-buffer dispatch corrupts intermediate tensors on discrete
+  AMD GPUs (every op passes `test-backend-ops` individually).
+- `02-metal-discrete-caps-and-bounce-buffer.patch` — **robustness.** Mac2
+  reduction caps (no-op on W6800X, helps older discrete GPUs) + bounce-buffer
+  fallback in `set_tensor`/`get_tensor` for unaligned host pointers (stock
+  asserts + aborts on discrete GPUs).
+- `03-metal-tiled-mul-mm.patch` — **perf (optional).** Threadgroup-tiled
+  `mul_mm`/dispatch for non-UMA; ~12x faster prompt eval. NOT required for
+  correctness (stock `mul_mv` is numerically correct here too).
+
+`patches/ollama/`:
+- `0001-ungate-metal-amd64.patch` — build the Metal backend on x86_64 macOS.
+- `0002-discover-metal-amd64.patch` — Metal device + VRAM reporting on
+  darwin/amd64.
+- `0003-sched-disable-mmap-discrete-metal.patch` — **perf.** Disable mmap on
+  darwin + discrete GPU so weights load into private VRAM instead of being
+  streamed over PCIe each token (1.6 -> ~104 t/s generation on llama3.2).
+
+The proven kernels referenced when porting live in
 `../reference/iron-llama-b6123/`.

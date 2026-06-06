@@ -5,38 +5,48 @@ All numbers measured on the target machine:
 - AMD Radeon PRO W6800X Duo (one die used), `recommendedMaxWorkingSetSize`
   ~34 GB, `simdgroup matrix mul. = false`, `has unified memory = false`
 - Model: `llama3.2` 3B Q4_K_M (reused from the local Ollama blob store)
-- Tool: `llama-bench` (`-p 64 -n 32 -r 2`)
+- Tool: Ollama `/api/generate` (`temperature=0`), t/s from the response's
+  `eval_count / eval_duration` (gen) and `prompt_eval_*` (prompt)
 
-## Single-die: backend comparison
+## Single-die: backend comparison (measured via Ollama)
 
-| Backend                              | pp (prompt) t/s | tg (generation) t/s |
-|--------------------------------------|----------------:|--------------------:|
-| Stock llama.cpp Metal (master)       |            2.30 |                2.07 |
-| Stock Metal + env tuning (N_CB, ub)  |            2.51 |                2.17 |
-| CPU (28 threads, `-ngl 0`)           |          222.14 |               29.85 |
-| **iRon-Llama patched Metal** (b6123) |      **338.74** |           **87.15** |
+| Backend / config                          | prompt t/s | gen t/s |
+|-------------------------------------------|-----------:|--------:|
+| GPU, stock Ollama defaults (mmap on)      |         32 |     1.6 |
+| GPU, concurrency on (stock)               |        ~2  |    ~2.3 | (garbage output)
+| CPU (28 threads, `num_gpu=0`)             |        133 |      28 |
+| **GPU, ollama-metal fixes (default)**     |    **211** | **~104**|
 
-Tuning used for the patched run: `GGML_METAL_N_CB=4`, `-fa 0 -ub 32 -b 32`,
-`GGML_METAL_DEVICE_INDEX=0`.
+The ollama-metal default = concurrency-off (correctness) + mmap-off on
+discrete (weights in VRAM) + tiled `mul_mm` (prompt throughput). No env vars
+or request flags required.
 
-Correctness: the patched build produces coherent text (verified with a
-"why is the sky blue" prompt) - not the `@@@@`/NaN garbage seen on the stock
-Metal discrete-GPU path.
+Correctness: the fixed build produces coherent text (verified with multiple
+prompts) - not the garbage seen on the stock Metal discrete-GPU path.
 
 ## Takeaways
 
-- The patched Metal backend is ~165x faster than stock Metal on this card and
-  ~3x faster than the CPU for generation.
-- The win comes from the kernels (threadgroup-tiled GEMM), not env tuning:
-  env tuning alone left stock Metal at ~2.5 t/s.
+- Two independent "Metal == Apple Silicon UMA" bugs caused the problem, neither
+  was the wavefront width:
+  - **Concurrency** (correctness): the Metal backend's concurrent dispatch
+    corrupts tensors on discrete AMD. Every op passes `test-backend-ops`
+    individually; the race only shows in the full graph.
+  - **mmap weights** (performance): Ollama left weights mmap'd in host RAM, so
+    the GPU streamed ~1.9 GB over PCIe per token (1.6 t/s). Loading into VRAM
+    is the ~65x generation win.
+- Generation now beats the CPU ~3.7x; prompt ~1.6x.
+- The threadgroup-tiled `mul_mm` kernel helps prompt eval (~12x vs stock
+  `mul_mv`) but is NOT required for correctness.
 - One die (~32 GB) easily fits 3B-30B (A3B) class models; multi-die is for
   capacity beyond 32 GB and concurrent multi-model throughput.
 
-## Reference points from upstream (iRon-Llama README / discussions)
+## Reference points from upstream (iRon-Llama README)
 
-On the same W6800X family, the fork reports (Qwen3-30B-A3B Q4_K_M, MoE):
-pp512 ~250-310 t/s, tg128 ~60-85 t/s; dense Qwen3-4B Q4_0: pp512 ~331,
-tg128 ~105. These corroborate our measured 3B numbers.
+The fork's headline "~87 t/s" on the W6800X is a **Vulkan (MoltenVK)** number.
+Its actual **Metal** result (Qwen3-30B-A3B Q4_K_M, MoE, ~3B active) is
+pp512 ~272 t/s, tg128 ~72 t/s on the older b6123 backend. Our b9509 Metal
+result (104 t/s gen on dense 3B) is in the same ballpark and exceeds the
+fork's Metal tg.
 
 ## How to reproduce
 

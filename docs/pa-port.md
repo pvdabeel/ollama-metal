@@ -4,6 +4,74 @@ Root-cause analysis and porting plan for making Ollama's pinned llama.cpp
 (`b9509`) produce **correct, fast** inference on the AMD Radeon Pro W6800X
 under Metal on Intel macOS.
 
+---
+
+## ⚠️ CORRECTION (validated 2026-06-06): the root cause is CONCURRENCY, not wave64
+
+The original analysis below (wave64 vs `N_SIMDWIDTH=32`, missing
+`has_simdgroup_reduction`, tiled `mul_mm` required for correctness) was
+**wrong for this hardware**. Direct measurement on the W6800X:
+
+- A standalone Metal probe reports `threadExecutionWidth = 32` (RDNA2 runs
+  Metal compute in wave32 mode), `supportsFamily(Metal3) = true`,
+  `supportsFamily(Mac2) = true`, `hasUnifiedMemory = false`.
+- Therefore stock b9509 *already* sets `has_simdgroup_reduction = true` (via
+  the Metal3 check) and `N_SIMDWIDTH = 32` is correct. The wave64 theory and
+  the caps fix are moot.
+- `test-backend-ops` passes **every** op on the Metal backend (MUL_MAT: 1069/0,
+  RMS_NORM/SOFT_MAX/ROPE/ADD/MUL/CPY/GET_ROWS/...: 0 failures). The kernels are
+  numerically correct in isolation.
+- The garbage output came from the Metal backend's **concurrent
+  command-buffer dispatch** (`commandBufferWithUnretainedReferences` +
+  backend-managed barriers). On discrete AMD GPUs the concurrent graph
+  corrupts intermediate tensors. Apple Silicon (UMA) is unaffected.
+
+**The essential fix** (≈5 lines): default `use_concurrency = false` on non-UMA
+devices in `ggml-metal-context.m`. Stock kernels + concurrency-off already
+produce coherent text.
+
+**The tiled `mul_mm` kernel is optional** — a performance win for prompt/batch
+eval only (~12x: 2.0 → 31 t/s prompt on the W6800X), irrelevant to
+single-token generation (which uses `mul_mv`).
+
+**Performance: SOLVED (mmap to VRAM).** The slow ~1.6 t/s generation was NOT
+launch overhead or concurrency. It was a *second* "Metal == Apple Silicon UMA"
+assumption, this time in Ollama's Go scheduler. On a discrete GPU with mmap on,
+llama.cpp wraps the mmap'd weight file in host-visible buffers (`MTL0_Mapped`),
+so the GPU streams ~1.9 GB of weights over PCIe *every token*. Ollama's
+`disableMmapDefaultReason` only disabled mmap for Metal *partial* offload (and
+host-pressure backoff is Linux-only), so a full-offload discrete Metal GPU kept
+mmap on. Fix (`server/sched.go`): on `darwin` with a discrete (non-integrated)
+GPU, default mmap OFF so weights load into private VRAM (`MTL0_Private`).
+
+Measured on llama3.2 (3B Q4), single W6800X die, by default (no flags/env):
+
+| Config                              | prompt t/s | gen t/s |
+|-------------------------------------|-----------:|--------:|
+| CPU (Xeon W-3275M)                  |        133 |      28 |
+| GPU, mmap on  (weights in host RAM) |         32 |     1.6 |
+| GPU, mmap off (weights in VRAM)     |        211 |   ~104  |
+
+Generation now beats the CPU ~3.7x and exceeds the iRon-Llama fork's Metal
+tg (72 t/s). Both fixes are automatic; no env vars or request flags needed.
+
+### Summary of the actual ollama-metal patch set
+1. `ggml-metal-context.m`: `use_concurrency = false` on non-UMA (correctness).
+2. `server/sched.go`: disable mmap on darwin+discrete GPU (performance).
+3. `ggml-metal-device.m`: bounce-buffer fallback for unaligned set/get_tensor
+   (robustness on discrete; stock asserts+aborts).
+4. (optional) tiled `mul_mm` kernel + dispatch: extra prompt throughput; NOT
+   required for correctness.
+5. `pa-ungate` (patches/ollama): build the Metal backend on x86_64 macOS.
+
+Also added: a bounce-buffer fallback in `ggml_metal_buffer_set_tensor` /
+`get_tensor` for unaligned host pointers (stock asserts + aborts on discrete
+GPUs when `newBufferWithBytesNoCopy` gets an unaligned pointer).
+
+---
+
+### Original (superseded) analysis follows
+
 ## Validated symptom (control)
 
 With `pa-ungate` + `pa-discover` applied (stock b9509 Metal kernels), Ollama
