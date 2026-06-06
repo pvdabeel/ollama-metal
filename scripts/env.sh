@@ -26,7 +26,7 @@ command -v git  >/dev/null || { echo "ERROR: git not found"; exit 1; }
 # Number of parallel build jobs.
 export JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 
-echo "ollama-amd-metal env:"
+echo "ollama-metal env:"
 echo "  OLLAMA   = $OLLAMA_TAG ($OLLAMA_COMMIT)"
 echo "  LLAMACPP = $LLAMA_CPP_VERSION"
 echo "  GO       = $(go version)"

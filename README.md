@@ -1,4 +1,4 @@
-# ollama-amd-metal
+# ollama-metal
 
 GPU-accelerated GGUF inference in **Ollama** on **Intel Macs with discrete AMD
 (Metal 3) GPUs**, plus multi-GPU (multi-die) support.
