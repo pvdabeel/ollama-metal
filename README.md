@@ -18,15 +18,39 @@ models CPU-only:
 - Even stock llama.cpp Metal is ~2 t/s on these GPUs (no `simdgroup_matrix`).
 
 The iRon-Llama kernels (threadgroup-tiled GEMM, `has_simdgroup_mm=false`) fix
-this. Measured on the target machine (one W6800X die, llama-3.2-3B Q4_K_M):
+this.
 
-| Backend                    | Prompt (pp) | Generation (tg) |
-|----------------------------|------------:|----------------:|
-| Stock llama.cpp Metal      |     2.3 t/s |         2.0 t/s |
-| CPU (28-thread Xeon W)     |     222 t/s |        29.9 t/s |
-| iRon-Llama patched Metal   | **339 t/s** |     **87 t/s**  |
+<table>
+<tr>
+<td width="44%" valign="top">
+<img src="docs/images/mac-pro-w6800x-duo.png" width="100%" alt="Mac Pro (2019) with two AMD Radeon Pro W6800X Duo MPX modules = 4 GPU dies">
+<sub>Mac Pro (2019), two Radeon Pro W6800X Duo MPX modules &mdash; <b>4 GPU dies</b>, ~32&nbsp;GB each, non-UMA, linked by Infinity Fabric.</sub>
+</td>
+<td valign="top">
 
-See [docs/benchmarks.md](docs/benchmarks.md) for full data.
+**Single die** (llama-3.2-3B Q4_K_M):
+
+<table>
+<tr><th align="left">Backend</th><th align="right">pp</th><th align="right">tg</th></tr>
+<tr><td>Stock llama.cpp Metal</td><td align="right">2.3</td><td align="right">2.0</td></tr>
+<tr><td>CPU (28-thread Xeon W)</td><td align="right">222</td><td align="right">29.9</td></tr>
+<tr><td>iRon-Llama patched Metal</td><td align="right"><b>339</b></td><td align="right"><b>87</b></td></tr>
+</table>
+
+**Cross-die layer split** (devstral 24B, VRAM-resident):
+
+<table>
+<tr><th align="left">Config</th><th align="right">tg</th></tr>
+<tr><td>single die</td><td align="right">75</td></tr>
+<tr><td>2-die split</td><td align="right">70</td></tr>
+<tr><td>4-way split</td><td align="right">60</td></tr>
+</table>
+
+<sub>t/s @ temp 0. Full data: <a href="docs/benchmarks.md">docs/benchmarks.md</a></sub>
+
+</td>
+</tr>
+</table>
 
 ## Target hardware (only supported config)
 
@@ -60,10 +84,13 @@ scripts/bench.sh llama3.2 # correctness + speed vs CPU baseline
 
 - [x] Phase 0: pins located, integration point identified
       (`OLLAMA_LLAMA_CPP_SOURCE` override), reference kernels vendored.
-- [ ] Phase A: single-die AMD Metal inside Ollama (un-gate + kernel port +
-      discovery).
-- [ ] Phase B: multi-die concurrent serving (one model per die).
-- [ ] Phase C (optional): single-model layer split across dies for >32 GB.
+- [x] Phase A: single-die AMD Metal inside Ollama (un-gate + kernel port +
+      discovery); correct + fast by default.
+- [x] Phase B: multi-die concurrent serving (one model per die); all 4 dies
+      discovered as `MTL0..MTL3` (~128 GB total).
+- [x] Phase C: single-model layer split across dies for >32 GB (host-mediated).
+- [x] Phase D (opt-in): Infinity Fabric peer copy for cross-die transfers
+      (`GGML_METAL_PEER_ENABLE`); correct, but no inference speedup vs Phase C.
 
 ## License
 
