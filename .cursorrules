@@ -1,0 +1,134 @@
+This repository maintains a patch set that enables GPU-accelerated GGUF
+inference in Ollama on Intel Macs with discrete AMD (Metal 3) GPUs, plus
+multi-GPU (multi-die) support. It is NOT a fork of Ollama or llama.cpp; it is a
+thin, re-appliable overlay on top of pinned upstream versions of both.
+
+## Why this project exists
+
+Upstream Ollama runs GGUF models CPU-only on Intel Macs with AMD GPUs:
+- Ollama's macOS GPU story moved to MLX (Apple Silicon, unified memory) in
+  v0.19. The llama.cpp/ggml Metal backend it still uses for GGUF is gated to
+  arm64; on x86_64 it is compiled out, so inference falls back to CPU.
+- Stock llama.cpp Metal also runs terribly on these GPUs because its matmul
+  kernels assume Apple-GPU `simdgroup_matrix` intrinsics (`has_simdgroup_mm`),
+  which AMD RDNA2 lacks. Measured ~2 t/s on a W6800X die (slower than CPU).
+
+The `Basten7/iRon-Llama` fork solved the kernel problem: it forces
+`has_simdgroup_mm = false` and ships threadgroup-tiled `mul_mm` GEMM kernels
+that run well on AMD. On this exact hardware it reaches ~339 t/s prompt /
+~87 t/s generation on ONE die, with coherent output - roughly 3x the CPU. This
+project ports that kernel work onto the llama.cpp version Ollama pins, wires it
+into Ollama's build for x86_64, teaches Ollama's discovery/scheduler about the
+AMD dies, and adds multi-die support.
+
+## Target hardware / platform (the only supported config)
+
+- Machine: Apple Mac Pro 2019 (MacPro7,1), Intel Xeon W (x86_64).
+- GPUs: 2x AMD Radeon PRO W6800X Duo = 4 GPU dies, ~32 GB usable each
+  (`recommendedMaxWorkingSetSize` ~= 34 GB/die), non-UMA (discrete VRAM/PCIe).
+- GPU caps (from ggml device init): `simdgroup reduction = true`,
+  `simdgroup matrix mul. = false`, `has unified memory = false`,
+  family `MTLGPUFamilyMetal3 (5001)`.
+- OS: macOS 26.x. Toolchain: Xcode + Metal; Go (MacPorts) >= the version in
+  Ollama's `go.mod`; MacPorts cmake/ninja/git. No Homebrew on this host.
+
+## Version pins (the heart of the repatching strategy)
+
+Two files at the repo root pin exactly what we patch against:
+- `LLAMA_CPP_VERSION`  - the upstream llama.cpp tag Ollama fetches (currently
+  `b9509`). This is the tree our kernel patch applies to.
+- `OLLAMA_VERSION`     - the Ollama tag + commit we integrate with (currently
+  `v0.30.6` / `87cff95...`).
+
+These MUST mirror the pins inside the matching Ollama release:
+- Ollama's own `LLAMA_CPP_VERSION` file is the source of truth for the
+  llama.cpp tag. On every Ollama bump, re-read it and update ours.
+
+## How Ollama builds the GGML backend (integration point)
+
+`ollama/llama/server/CMakeLists.txt`:
+- Reads `LLAMA_CPP_VERSION`, then `FetchContent_Declare(llama_cpp ...)` clones
+  `ggml-org/llama.cpp` at that tag and applies an "Ollama-compat" patch
+  (`ollama/llama/compat/`) that shims published GGUF blobs.
+- Env override `OLLAMA_LLAMA_CPP_SOURCE=<dir>` makes Ollama build against a
+  LOCAL llama.cpp tree AND skips the compat patch. This is our injection point:
+  we point Ollama at a patched local checkout of `b9509`.
+
+amd64 macOS build entrypoint: `ollama/scripts/build_darwin.sh` (the
+`ARCH=amd64` branch, `CMAKE_ARCH=x86_64`). It currently builds `ggml-cpu` +
+MLX; our patch also builds and installs the Metal backend for x86_64.
+
+## Repatching strategy (keep changes isolated and cheap to re-apply)
+
+Golden rule: NEVER hand-edit a vendored Ollama or llama.cpp checkout in place
+and call it done. All changes live HERE as:
+1. `patches/*.patch` - git-format patches applied to a clean upstream checkout.
+   - `patches/llama-cpp/` applies to llama.cpp @ `LLAMA_CPP_VERSION`
+     (AMD-Metal kernels, build un-gating, multi-device backend registration).
+   - `patches/ollama/` applies to Ollama @ `OLLAMA_VERSION` (discovery / VRAM
+     reporting / scheduler placement for the AMD dies, build_darwin.sh).
+2. `reference/iron-llama-b6123/` - the proven upstream kernels (MIT, from
+   `Basten7/iRon-Llama`, base llama.cpp `b6123`) kept verbatim for provenance
+   and as the semantic source when porting forward to `b9509`.
+3. `scripts/` - deterministic clone -> patch -> build -> bench automation.
+
+Bumping versions (the routine maintenance task):
+- Update `OLLAMA_VERSION`; read the new Ollama `LLAMA_CPP_VERSION`; update ours.
+- `git apply --3way` the patches onto the new trees; resolve rejects.
+- Because the kernels are version-sensitive, prefer re-porting semantically
+  (force `has_simdgroup_mm=false`; enable threadgroup `mul_mm`/`mul_mm_id` when
+  `!has_unified_memory`; keep `flash_attn_ext` off on AMD) over blind apply.
+- Always keep the standalone llama.cpp `llama-server` build as a fallback
+  inference path (it already works at ~87 t/s and depends only on llama.cpp).
+
+## The kernel change, in one paragraph (so ports stay faithful)
+
+In `ggml-metal.m` device init: report `has_simdgroup_reduction` for
+`MTLGPUFamilyMetal3`/`Mac2`, force `ctx->has_simdgroup_mm = false`, and gate
+the matmul kernel set on `allow_mm_kernels = has_simdgroup_mm ||
+!has_unified_memory` so the threadgroup-tiled `mul_mm`/`mul_mm_id` kernels load
+on non-UMA AMD. Disable `flash_attn_ext` when `!has_unified_memory ||
+!has_simdgroup_mm`. Device selection honors `MTLCopyAllDevices()` +
+`GGML_METAL_DEVICE_INDEX`. The `.metal` file carries the ~1200-line tiled GEMM
+kernels. Multi-die work replaces the single global device context with one
+context per registered `ggml_backend_device`.
+
+## Build / test workflow
+
+- `scripts/env.sh`     - sets pins, locates Go (MacPorts), Xcode, work dirs.
+- `scripts/bootstrap.sh` - clones Ollama @ `OLLAMA_VERSION` and llama.cpp @
+  `LLAMA_CPP_VERSION` into `work/` (git-ignored).
+- `scripts/apply-patch.sh` - applies `patches/` onto the `work/` checkouts.
+- `scripts/build.sh`   - builds Ollama against the patched tree via
+  `OLLAMA_LLAMA_CPP_SOURCE=work/llama.cpp`.
+- `scripts/bench.sh`   - runs llama-bench / `ollama run` timing harness.
+
+Validation gates (Metal on AMD is correctness-fragile - always check both):
+1. CORRECTNESS: a short prompt must produce coherent text (no `@@@@`/NaN).
+2. SPEED: tokens/sec must clearly beat the CPU baseline (~30 t/s tg on 3B).
+Record results in `bench/` with model, quant, die index, t/s, and build pin.
+
+Useful env knobs (defaults found best on this hardware):
+- `GGML_METAL_DEVICE_INDEX=<0..3>` selects the die.
+- `GGML_METAL_N_CB=4` and small batches (`-ub 32 -b 32`) help non-UMA.
+
+## Scope / non-goals
+
+- No tensor-parallel speedup: not feasible on non-UMA Metal. Multi-die is for
+  CAPACITY (run >32 GB models via layer split) and CHEAP THROUGHPUT (one model
+  per die / concurrent serving), not higher single-stream tokens/sec.
+- Do not vendor full Ollama or llama.cpp source trees into this repo; clone at
+  build time via the pins. Keep the repo to patches + scripts + docs + the
+  small reference kernels.
+- Do not run `sudo`/package installs from automation; surface the command for
+  the user to run (this host gates `sudo` behind a password).
+
+## Conventions
+
+- Shell scripts: `bash`, `set -euo pipefail`, POSIX-ish, no Homebrew assumptions.
+- Patches: `git format-patch` style, one logical change per file, named
+  `NN-short-description.patch`, grouped under `patches/llama-cpp/` or
+  `patches/ollama/`.
+- Docs live in `docs/`; curated benchmark results in `bench/*.md`.
+- Keep `LLAMA_CPP_VERSION` / `OLLAMA_VERSION` as the single source of truth for
+  pins; scripts read them, never hardcode tags.

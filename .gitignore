@@ -1,0 +1,20 @@
+# Build / scratch trees (cloned or fetched at build time, never committed)
+/build/
+/work/
+/dist/
+/.cache/
+
+# Cloned upstreams (fetched by scripts/bootstrap.sh)
+/work/ollama/
+/work/llama.cpp/
+/work/go-toolchain/
+
+# Benchmark logs (keep curated results in bench/*.md, ignore raw dumps)
+/bench/raw/
+*.log
+
+# macOS
+.DS_Store
+
+# Editor
+*.swp
