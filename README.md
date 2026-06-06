@@ -120,18 +120,44 @@ OLLAMA_VERSION      pinned Ollama tag + commit we integrate with
 docs/               architecture.md, repatching.md, benchmarks.md
 patches/            git patches: patches/llama-cpp/ and patches/ollama/
 reference/          verbatim iRon-Llama b6123 kernels (MIT) for provenance/port
-scripts/            env / bootstrap / apply-patch / build / bench automation
+scripts/            env / bootstrap / apply-patch / build / bench / install-app
 bench/              curated benchmark results
 ```
 
 ## Quick start (once patches land)
 
 ```sh
-scripts/bootstrap.sh      # clone Ollama + llama.cpp at the pinned versions
-scripts/apply-patch.sh    # apply patches/ onto the work/ checkouts
-scripts/build.sh          # build Ollama against the patched llama.cpp tree
-scripts/bench.sh llama3.2 # correctness + speed vs CPU baseline
+scripts/bootstrap.sh             # clone Ollama + llama.cpp at the pinned versions
+scripts/apply-patch.sh           # apply patches/ onto the work/ checkouts
+BUILD_MODE=local scripts/build.sh # build Ollama against the patched llama.cpp tree
+scripts/bench.sh llama3.2        # correctness + speed vs CPU baseline
 ```
+
+## Use it with the official Ollama.app (menubar UI)
+
+The desktop app from [ollama.com](https://ollama.com/download/Ollama.dmg) is a
+native menubar app that spawns `Contents/Resources/ollama serve`, which spawns
+`Contents/Resources/llama-server`. On an Intel Mac it ships **CPU-only** (the
+stock ggml Metal backend is gated to arm64). Swap in our patched, self-contained
+x86_64 builds to get the nice UI **and** the AMD GPUs:
+
+```sh
+BUILD_MODE=local scripts/build.sh   # produce the patched binaries
+scripts/install-app.sh              # back up + replace the app's ollama + llama-server
+                                    # (ad-hoc re-signs them; version-checked)
+```
+
+Then launch Ollama normally. Verify with `tail -f ~/.ollama/logs/server.log`
+(look for `MTL0..MTL3` and `mmap = false`). Revert any time with
+`scripts/uninstall-app.sh`.
+
+- Both binaries are replaced: `llama-server` (Metal compute) and the `ollama`
+  Go server (discrete-Metal mmap disable + multi-die discovery).
+- macOS protects `/Applications/Ollama.app`; grant the permission prompt (or run
+  the script with the needed Full Disk Access) the first time.
+- **Re-run `install-app.sh` after every Ollama update** — the updater restores
+  the stock CPU-only binaries. If the new app version differs from
+  `OLLAMA_VERSION`, the script tells you to re-pin and rebuild first.
 
 ## Status
 
