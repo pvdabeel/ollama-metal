@@ -71,6 +71,25 @@ free die. Set `OLLAMA_MAX_LOADED_MODELS=4` to cap at one per die. Models that do
 not fit one die (e.g. with very large context) fall back to the stock
 spread/split path.
 
+## Cross-die layer split (single model >32 GB)
+
+A single model can be split across dies (`-sm layer` / `OLLAMA_SCHED_SPREAD=1`),
+so models larger than one die's 32 GB run by using up to ~128 GB across 4 dies.
+Cross-die tensor transfers are host-mediated (a Metal blit cannot cross physical
+`MTLDevice`s), so throughput is PCIe-bound, not compute-bound.
+
+| Split (devstral 14B Q4)              | dies        | gen t/s |
+|--------------------------------------|-------------|--------:|
+| single die (one model per die)       | 1           |    ~95* |
+| forced 2-die (`-ts 0,0,1,1`)         | MTL2 + MTL3 |    21.5 |
+| Ollama spread (`OLLAMA_SCHED_SPREAD`)| MTL0..MTL3  |    18.9 |
+
+*single-die rate is model-dependent; devstral is a 14B dense model.
+
+All splits produce coherent output (verified). Use cross-die split only for
+models that do not fit one die — it trades ~4-5x throughput for capacity. For
+models that fit one die, prefer one-model-per-die (full speed, see above).
+
 ## Reference points from upstream (iRon-Llama README)
 
 The fork's headline "~87 t/s" on the W6800X is a **Vulkan (MoltenVK)** number.

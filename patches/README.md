@@ -35,17 +35,31 @@ root-cause analysis (the original wave64 theory was disproven by measurement).
 validated 3 different models served concurrently on 3 dies. See
 `../docs/benchmarks.md` (Multi-die section).
 
+**Phase C complete** — cross-die layer split for single models >32 GB. The
+Metal backend's cross-device tensor copies are host-mediated on discrete dies
+(a Metal blit cannot cross physical `MTLDevice`s), so `-sm layer` /
+`OLLAMA_SCHED_SPREAD` splits a model across dies correctly (validated coherent
+on a forced 2-die and an Ollama 4-die spread). Throughput is host/PCIe-bound
+(~20 t/s on a 14B split), the trade for capacity up to ~128 GB.
+
 `patches/llama-cpp/`:
-- `01-metal-concurrency-off-nonuma.patch` — **correctness.** Default
-  `use_concurrency = false` on non-UMA (discrete) Metal devices. The backend's
-  concurrent command-buffer dispatch corrupts intermediate tensors on discrete
-  AMD GPUs (every op passes `test-backend-ops` individually).
+- `01-metal-context-concurrency-and-cross-die.patch` (`ggml-metal-context.m`):
+  - **correctness.** Default `use_concurrency = false` on non-UMA (discrete)
+    Metal devices. The backend's concurrent command-buffer dispatch corrupts
+    intermediate tensors on discrete AMD GPUs (every op passes
+    `test-backend-ops` individually).
+  - **cross-die copy.** `ggml_metal_cpy_tensor_async` returns false when src and
+    dst are on different physical `MTLDevice`s (a Metal blit cannot cross
+    devices), so ggml falls back to a host-mediated copy. Required for
+    multi-die layer split.
 - `02-metal-discrete-device.patch` — **device adaptations** (`ggml-metal-device.m`):
   Mac2 reduction caps (no-op on W6800X, helps older discrete GPUs); bounce-buffer
   fallback in `set_tensor`/`get_tensor` for unaligned host pointers (stock
-  asserts + aborts on discrete GPUs); and **multi-die selection** — `device_init`
+  asserts + aborts on discrete GPUs); **multi-die selection** — `device_init`
   binds the ggml device to `MTLCopyAllDevices()[idx]` (idx from the ggml slot or
-  `GGML_METAL_DEVICE_INDEX`) instead of always the system default device.
+  `GGML_METAL_DEVICE_INDEX`) instead of always the system default device; and a
+  **cross-die guard** in `ggml_metal_buffer_cpy_tensor` (same blit-cross-device
+  rule as above for the buffer-level copy path).
 - `03-metal-tiled-mul-mm.patch` — **perf (optional).** Threadgroup-tiled
   `mul_mm`/dispatch for non-UMA; ~12x faster prompt eval. NOT required for
   correctness (stock `mul_mv` is numerically correct here too).
