@@ -23,6 +23,13 @@ command -v go   >/dev/null || { echo "ERROR: go not found (sudo port install go)
 command -v cmake>/dev/null || { echo "ERROR: cmake not found (sudo port install cmake)"; exit 1; }
 command -v git  >/dev/null || { echo "ERROR: git not found"; exit 1; }
 
+# This host exports GOPATH=/usr/local/go, which is NOT writable, so `go build`
+# fails with "could not create module cache: mkdir /usr/local/go". Override to
+# a writable GOPATH (GOROOT is the MacPorts one and stays correct).
+export GOPATH="${OLLAMA_METAL_GOPATH:-$HOME/go}"
+export GOMODCACHE="$GOPATH/pkg/mod"
+mkdir -p "$GOMODCACHE"
+
 # Number of parallel build jobs.
 export JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 
