@@ -1,0 +1,18 @@
+diff --git a/cmake/local.cmake b/cmake/local.cmake
+index 116e7526..27f57d7d 100644
+--- a/cmake/local.cmake
++++ b/cmake/local.cmake
+@@ -503,7 +503,12 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
+     endif()
+ 
+     set(_cpu_args)
+-    if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
++    # ollama-metal: widen the Metal inference build to ALL Apple targets,
++    # not just arm64, so Intel Macs (x86_64) with Metal-capable AMD GPUs
++    # (e.g. Radeon Pro W6800X on MacPro7,1) also build the Metal backend.
++    # Mirrors the arm64 path: static link + metallib embedded into
++    # llama-server, so no separate metallib install/glob is needed.
++    if(APPLE)
+         list(APPEND _cpu_args
+             -DBUILD_SHARED_LIBS=OFF
+             -DGGML_BACKEND_DL=OFF
