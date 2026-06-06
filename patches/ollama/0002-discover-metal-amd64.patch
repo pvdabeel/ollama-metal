@@ -1,0 +1,21 @@
+diff --git a/discover/runner.go b/discover/runner.go
+index f0cfe8fc..16ffe776 100644
+--- a/discover/runner.go
++++ b/discover/runner.go
+@@ -255,7 +255,15 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
+ 
+ 		bootstrapped = true
+ 	} else {
+-		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
++		// ollama-metal: the Metal backend never updates free VRAM, on Apple
++		// Silicon (UMA) or on Intel Macs with a discrete AMD GPU. Widen the
++		// arm64-only guard to all darwin so the amd64 Metal path skips the
++		// periodic free-VRAM refresh (which would otherwise re-launch
++		// llama-server and report stale/zeroed Metal VRAM). The discrete AMD
++		// GPU is still treated as non-integrated (see
++		// isIntegratedLlamaServerDevice, which stays arm64-only), so its
++		// 32 GB VRAM is tracked for layer-offload scheduling.
++		if runtime.GOOS == "darwin" {
+ 			// metal never updates free VRAM
+ 			return append([]ml.DeviceInfo{}, devices...)
+ 		}
