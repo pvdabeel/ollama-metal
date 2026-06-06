@@ -40,13 +40,15 @@ this.
 **Cross-die layer split** (devstral 24B, VRAM-resident):
 
 <table>
-<tr><th align="left">Config</th><th align="right">tg</th></tr>
-<tr><td>single die</td><td align="right">75</td></tr>
-<tr><td>2-die split</td><td align="right">70</td></tr>
-<tr><td>4-way split</td><td align="right">60</td></tr>
+<tr><th align="left">Config</th><th align="right">pp</th><th align="right">tg<br><sub>host</sub></th><th align="right">tg<br><sub>fabric</sub></th></tr>
+<tr><td>single die</td><td align="right">153</td><td align="right">75.3</td><td align="right">&mdash;</td></tr>
+<tr><td>2-die split</td><td align="right">152</td><td align="right">70.3</td><td align="right">70.1</td></tr>
+<tr><td>4-way split</td><td align="right">83</td><td align="right">60.4</td><td align="right">60.6</td></tr>
 </table>
 
-<sub>t/s @ temp 0. Full data: <a href="docs/benchmarks.md">docs/benchmarks.md</a></sub>
+<sub>t/s @ temp 0. <b>tg host</b> = default host-mediated copy; <b>tg fabric</b> =
+Infinity Fabric peer copy (`GGML_METAL_PEER_ENABLE`) &mdash; a tie, see Phase D.
+Full data: <a href="docs/benchmarks.md">docs/benchmarks.md</a></sub>
 
 </td>
 </tr>
