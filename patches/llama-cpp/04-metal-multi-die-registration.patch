@@ -1,0 +1,46 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 4a3ebb556..ccd32281f 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -273,6 +273,10 @@ void ggml_metal_device_free(ggml_metal_device_t dev);
+ 
+ ggml_metal_device_t ggml_metal_device_get(int device);
+ 
++// ollama-metal: number of physical Metal devices in the system (MTLCopyAllDevices
++// count). Used to default the registered backend-device count to one per die.
++int ggml_metal_device_count(void);
++
+ void * ggml_metal_device_get_obj  (ggml_metal_device_t dev); // id<MTLDevice>
+ void * ggml_metal_device_get_queue(ggml_metal_device_t dev); // id<MTLCommandQueue>
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index a1003b3ac..9f998b586 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -913,9 +913,24 @@ ggml_backend_reg_t ggml_backend_metal_reg(void) {
+         static std::mutex mutex;
+         std::lock_guard<std::mutex> lock(mutex);
+ 
+-        const char * env = getenv("GGML_METAL_DEVICES");
+-        if (env) {
++        // ollama-metal: expose every PHYSICAL Metal device as its own ggml
++        // backend device by default, so multi-die cards (e.g. dual Radeon Pro
++        // W6800X Duo = 4 dies) are discovered as MTL0..MTL3. Stock defaulted to
++        // a single device. Apple Silicon / single-GPU Intel Macs report a count
++        // of 1, so behaviour there is unchanged. Override precedence:
++        //   1. GGML_METAL_DEVICE_INDEX -> this process is pinned to ONE die
++        //      (Ollama sets this per runner for one-model-per-die); register a
++        //      single device which device_init maps to the requested die.
++        //   2. GGML_METAL_DEVICES -> explicit virtual/real device count.
++        //   3. otherwise -> the physical Metal device count.
++        const char * idx_env = getenv("GGML_METAL_DEVICE_INDEX");
++        const char * env     = getenv("GGML_METAL_DEVICES");
++        if (idx_env) {
++            g_devices = 1;
++        } else if (env) {
+             g_devices = atoi(env);
++        } else {
++            g_devices = ggml_metal_device_count();
+         }
+ 
+         static std::vector<ggml_backend_device_ptr> devs;

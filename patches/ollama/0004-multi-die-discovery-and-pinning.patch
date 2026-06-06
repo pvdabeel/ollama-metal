@@ -1,0 +1,64 @@
+diff --git a/discover/llama_server.go b/discover/llama_server.go
+index 7a79318e..fdfdd294 100644
+--- a/discover/llama_server.go
++++ b/discover/llama_server.go
+@@ -465,7 +465,14 @@ func inferLibrary(name, description string) string {
+ 		return "CUDA"
+ 	case strings.Contains(combined, "rocm") || strings.Contains(combined, "hip"):
+ 		return "ROCm"
+-	case strings.Contains(combined, "metal") || strings.Contains(combined, "apple"):
++	// ollama-metal: the ggml-metal backend names every device "MTL<n>" (e.g.
++	// MTL0..MTL3 for the 4 dies of dual W6800X Duo cards). On Apple Silicon the
++	// description also contains "Apple", but discrete AMD GPUs on Intel Macs
++	// have a description like "AMD Radeon PRO W6800X Duo" with neither "metal"
++	// nor "apple". Match the "MTL" device-name prefix so those classify as
++	// Metal too -- otherwise Library defaults to the raw GPU name, which breaks
++	// ByLibrary grouping and the GGML_METAL_DEVICE_INDEX per-die pinning.
++	case strings.Contains(combined, "metal") || strings.Contains(combined, "apple") || strings.HasPrefix(strings.ToLower(name), "mtl"):
+ 		return "Metal"
+ 	case strings.Contains(combined, "vulkan"):
+ 		return "Vulkan"
+diff --git a/llm/llama_server.go b/llm/llama_server.go
+index 85701351..fe671157 100644
+--- a/llm/llama_server.go
++++ b/llm/llama_server.go
+@@ -2640,6 +2640,16 @@ func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
+ 	// --list-devices stdout, which matches the buffer log prefix.
+ 	for _, gpu := range s.gpus {
+ 		if gpu.DeviceID == id {
++			// ollama-metal: when a runner is pinned to a single device, all of
++			// its GPU footprint belongs to that device. A pinned Metal runner
++			// (GGML_METAL_DEVICE_INDEX, g_devices=1) always labels its buffers
++			// "MTL0" regardless of which physical die it bound to, so the
++			// discovery name (e.g. "MTL2") won't match s.vramByDevice and the
++			// per-name lookup returns 0 -- causing the scheduler to double-book
++			// one die. Attribute the whole GPU footprint to the sole device.
++			if len(s.gpus) == 1 {
++				return s.memGPU
++			}
+ 			return s.vramByDevice[gpu.Name]
+ 		}
+ 	}
+diff --git a/ml/device.go b/ml/device.go
+index 5dee4fe6..186fe424 100644
+--- a/ml/device.go
++++ b/ml/device.go
+@@ -709,6 +709,18 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
+ 			return
+ 		}
+ 		envVar = "GGML_VK_VISIBLE_DEVICES"
++	case "Metal":
++		// ollama-metal: pin a single-device runner to one physical Metal die.
++		// Our patched ggml-metal backend honours GGML_METAL_DEVICE_INDEX and
++		// registers only MTLCopyAllDevices()[idx], so one model binds to one
++		// die on multi-die cards (e.g. Radeon Pro W6800X Duo = 4 dies). Only
++		// emit for single-device placement (the value is a single index, not a
++		// comma list); spread placement leaves it unset so the runner sees all
++		// dies and llama.cpp tensor-splits across them.
++		if !mustFilter {
++			return
++		}
++		envVar = "GGML_METAL_DEVICE_INDEX"
+ 	default:
+ 		return
+ 	}

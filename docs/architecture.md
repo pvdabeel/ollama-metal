@@ -74,11 +74,18 @@ Ollama's Go, and a small, separate Ollama patch for discovery/build.
 
 ## Multi-die model
 
-- Phase A: single die (`GGML_METAL_DEVICE_INDEX`), the big win.
-- Phase B: register each `MTLCopyAllDevices()` device as a separate
-  `ggml_backend_device` with its own context/queue/buffers; report all dies to
-  Ollama; place one model per die (`OLLAMA_SCHED_SPREAD`,
-  `OLLAMA_MAX_LOADED_MODELS`). No cross-device tensors needed.
+- Phase A (done): single die, the big win. Correctness via concurrency-off,
+  perf via mmap-off; automatic by default.
+- Phase B (done): the ggml-metal backend registers one `ggml_backend_device`
+  per physical die by default (`ggml_metal_device_count()` ->
+  `MTLCopyAllDevices()[i]`), so a single `ollama serve` discovers `MTL0..MTL3`.
+  Ollama already places one model per GPU (`bestSingleGPUFit`); the patches make
+  it work for Metal by (1) classifying `MTL<n>` devices as the `Metal` library,
+  (2) exporting `GGML_METAL_DEVICE_INDEX` to pin each runner to its die
+  (g_devices collapses to 1 in that process), and (3) attributing a pinned
+  runner's whole footprint to its die for VRAM accounting. No cross-device
+  tensors needed. Validated: 3 models concurrent on 3 dies. Cap with
+  `OLLAMA_MAX_LOADED_MODELS=4`; `OLLAMA_SCHED_SPREAD` opts into cross-die split.
 - Phase C (optional): host-mediated cross-die `set/get/cpy_tensor` + ggml
   backend-sched layer split for single models >32 GB. Expect ~single-die speed.
 

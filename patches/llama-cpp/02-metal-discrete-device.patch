@@ -1,0 +1,141 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 05d7f4305..dcd93bc33 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -676,13 +676,53 @@ static enum ggml_metal_device_id ggml_metal_device_id_parse(const char * name) {
+     return GGML_METAL_DEVICE_GENERIC;
+ }
+ 
++int ggml_metal_device_count(void) {
++    // ollama-metal: report the number of physical Metal devices so the backend
++    // can register one ggml device per die. On Apple Silicon / single-GPU Macs
++    // this is 1 (unchanged behaviour); on the Mac Pro with dual W6800X Duo
++    // cards it is 4. Falls back to 1 if enumeration returns nothing.
++    int n = 0;
++    @autoreleasepool {
++        NSArray<id<MTLDevice>> * all_devices = MTLCopyAllDevices();
++        n = (int) all_devices.count;
++        [all_devices release];
++    }
++    return n > 0 ? n : 1;
++}
++
++
+ ggml_metal_device_t ggml_metal_device_init(int device) {
+     ggml_metal_device_t dev = calloc(1, sizeof(struct ggml_metal_device));
+ 
+     assert(dev != NULL);
+ 
+     if (dev->mtl_device == nil) {
+-        dev->mtl_device = MTLCreateSystemDefaultDevice();
++        // ollama-metal: map this ggml backend device to a distinct PHYSICAL
++        // Metal device. Stock always used MTLCreateSystemDefaultDevice(), so on
++        // multi-die cards (e.g. dual Radeon Pro W6800X Duo = 4 dies) every ggml
++        // device pointed at the same die. We select MTLCopyAllDevices()[idx]:
++        //   - GGML_METAL_DEVICE_INDEX pins a single die for this process
++        //     (used by Ollama to run one model per die); else
++        //   - the ggml device index is used directly (multi-device in-process).
++        // Out-of-range / unset falls back to the system default device. The
++        // chosen device is retained to balance [release] in *_device_free.
++        int phys = device;
++        {
++            const char * idx_env = getenv("GGML_METAL_DEVICE_INDEX");
++            if (idx_env != NULL) {
++                phys = atoi(idx_env);
++            }
++        }
++        if (phys >= 0) {
++            NSArray<id<MTLDevice>> * all_devices = MTLCopyAllDevices();
++            if ((NSUInteger) phys < all_devices.count) {
++                dev->mtl_device = [all_devices[phys] retain];
++            }
++            [all_devices release];
++        }
++        if (dev->mtl_device == nil) {
++            dev->mtl_device = MTLCreateSystemDefaultDevice();
++        }
+ 
+         if (dev->mtl_device) {
+             dev->mtl_queue = [dev->mtl_device newCommandQueue];
+@@ -695,6 +735,18 @@ ggml_metal_device_t ggml_metal_device_init(int device) {
+             dev->props.device = device;
+             dev->props.has_simdgroup_reduction  = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
+             dev->props.has_simdgroup_reduction |= [dev->mtl_device supportsFamily:MTLGPUFamilyMetal3_GGML];
++            // ollama-metal: robustness for discrete GPUs. On the Radeon Pro
++            // W6800X (RDNA2) Metal already reports MTLGPUFamilyMetal3 and a
++            // 32-wide threadExecutionWidth, so has_simdgroup_reduction is
++            // already true and simd_sum/simd_max are correct -- this |= Mac2
++            // line is a NO-OP there. It is kept only to also enable reductions
++            // on older discrete GPUs that report Mac2 but not Metal3.
++            // NOTE: the garbage output on the W6800X was NOT caused by
++            // simdgroup caps or wavefront width (every op passes
++            // test-backend-ops); the real cause was the Metal backend's
++            // concurrent command-buffer dispatch -- see ggml-metal-context.m
++            // (use_concurrency defaults off on non-UMA devices).
++            dev->props.has_simdgroup_reduction |= [dev->mtl_device supportsFamily:MTLGPUFamilyMac2];
+ 
+             dev->props.has_simdgroup_mm = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
+             dev->props.has_unified_memory = dev->mtl_device.hasUnifiedMemory;
+@@ -855,6 +907,13 @@ ggml_metal_device_t ggml_metal_device_init(int device) {
+                 dev->props.max_working_set_size   = dev->mtl_device.maxBufferLength;
+             }
+ 
++            // ollama-metal: name by ggml device slot (device). When this
++            // process registers all dies (discovery), slot == phys so the dies
++            // are MTL0..MTL3. When pinned to one die (GGML_METAL_DEVICE_INDEX,
++            // g_devices=1) the sole slot is MTL0 regardless of which physical
++            // die it bound to; that is fine because Ollama matches the runner
++            // to its device by DeviceID, and per-die VRAM accounting attributes
++            // the whole footprint to the single device (see VRAMByGPU).
+             snprintf(dev->props.name, sizeof(dev->props.name), "%s%d", "MTL", device);
+             snprintf(dev->props.desc, sizeof(dev->props.desc), "%s", [[dev->mtl_device name] UTF8String]);
+ 
+@@ -1710,7 +1769,17 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
+                                                               options:MTLResourceStorageModeShared
+                                                           deallocator:nil];
+ 
+-        GGML_ASSERT(buf_src);
++        // ollama-metal: newBufferWithBytesNoCopy requires a page-aligned host
++        // pointer (and length); callers may pass an unaligned `data` (e.g. a
++        // std::vector backing store). On discrete GPUs (no unified memory) that
++        // would otherwise hit GGML_ASSERT and abort. Fall back to an aligned
++        // bounce buffer (newBufferWithLength returns page-aligned shared memory)
++        // and copy the source bytes into it first.
++        if (buf_src == nil) {
++            buf_src = [buf->dev->mtl_device newBufferWithLength:size options:MTLResourceStorageModeShared];
++            GGML_ASSERT(buf_src);
++            memcpy([buf_src contents], data_ptr, size);
++        }
+ 
+         // dst
+         struct ggml_metal_buffer_id bid_dst = ggml_metal_buffer_get_id(buf, tensor);
+@@ -1767,7 +1836,17 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
+                                                               options:MTLResourceStorageModeShared
+                                                           deallocator:nil];
+ 
+-        GGML_ASSERT(buf_dst);
++        // ollama-metal: see ggml_metal_buffer_set_tensor -- the destination
++        // host pointer may be unaligned (e.g. a std::vector for logits / a test
++        // harness read-back), in which case newBufferWithBytesNoCopy returns nil
++        // and stock would abort on discrete (non-UMA) GPUs. Use an aligned
++        // bounce buffer and copy the result back out afterwards.
++        bool dst_bounce = false;
++        if (buf_dst == nil) {
++            buf_dst = [buf->dev->mtl_device newBufferWithLength:size options:MTLResourceStorageModeShared];
++            GGML_ASSERT(buf_dst);
++            dst_bounce = true;
++        }
+ 
+         id<MTLCommandBuffer> cmd_buf = [buf->dev->mtl_queue commandBufferWithUnretainedReferences];
+ 
+@@ -1785,6 +1864,10 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
+ 
+         [cmd_buf commit];
+         [cmd_buf waitUntilCompleted];
++
++        if (dst_bounce) {
++            memcpy(data, [buf_dst contents], size);
++        }
+     }
+ }
+ 

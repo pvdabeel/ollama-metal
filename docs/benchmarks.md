@@ -40,6 +40,37 @@ prompts) - not the garbage seen on the stock Metal discrete-GPU path.
 - One die (~32 GB) easily fits 3B-30B (A3B) class models; multi-die is for
   capacity beyond 32 GB and concurrent multi-model throughput.
 
+## Multi-die: one model per die (concurrent multi-model)
+
+The Mac Pro's two W6800X Duo cards expose **4 distinct physical dies** (unique
+Metal `registryID`s, 32 GiB each = 128 GiB total). With the multi-die patches a
+single `ollama serve` discovers all four (`MTL0..MTL3`) and places one model per
+die automatically (`bestSingleGPUFit` + per-die VRAM accounting + a
+`GGML_METAL_DEVICE_INDEX` export that pins each runner to its die).
+
+Two copies of llama3.2 3B pinned to die 0 and die 1, raw `llama-server`:
+
+| Scenario              | die0 gen t/s | die1 gen t/s |
+|-----------------------|-------------:|-------------:|
+| solo (one die idle)   |          102 |           94 |
+| concurrent (both)     |          101 |           99 |
+
+Concurrent throughput equals solo -> the dies run fully in parallel (~2x
+aggregate). A shared die would roughly halve each.
+
+Three *different* models, one `ollama serve`, served concurrently:
+
+| Model        | size | die  | gen t/s (concurrent) |
+|--------------|-----:|------|---------------------:|
+| llama3.2 3B  | 2 GB | MTL0 |                 99.8 |
+| devstral     |14 GB | MTL1 |                 19.5 |
+| qwen3-coder  |18 GB | MTL2 |                 72.6 |
+
+Placement is automatic: each `/api/generate` for a new model lands on the next
+free die. Set `OLLAMA_MAX_LOADED_MODELS=4` to cap at one per die. Models that do
+not fit one die (e.g. with very large context) fall back to the stock
+spread/split path.
+
 ## Reference points from upstream (iRon-Llama README)
 
 The fork's headline "~87 t/s" on the W6800X is a **Vulkan (MoltenVK)** number.
