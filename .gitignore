@@ -11,6 +11,13 @@
 
 # Benchmark logs (keep curated results in bench/*.md, ignore raw dumps)
 /bench/raw/
+
+# Compiled tp/ exploration benchmarks (build locally; build cmd in each file header)
+/bench/tp/tp-block-ggml
+/bench/tp/tp-ffn-ggml
+/bench/tp/tp-layer-bench
+/bench/tp/tp-moe-ggml
+/bench/tp/tp-copy-ggml
 *.log
 
 # macOS
