@@ -3,19 +3,13 @@
 Ollama code that enables running local LLMs on the Apple Mac Pro with <b>AMD
 Radeon Pro W6800X Duo card(s)</b>.
 
-- Provides a new Metal kernel that runs GGUF models on AMD Radeon GPUs.
+- Provides a <b>new Metal kernel</b> that runs GGUF models on AMD Radeon GPUs.
 - Enables Ollama to detect one or more AMD Radeon dies and use them for GGUF
   Metal inference, running a separate LLM on each.
 - Enables Ollama to split a single large model across dies, pooling their
   memory (~128 GB total) to run models too big for one card.
 - Enables Ollama to detect and use the AMD Infinity Fabric linking the cards for
   direct die-to-die VRAM transfers.
-
-Out of the box, Ollama on macOS accelerates inference through Apple's MLX
-framework, which targets M-series chips: it assumes the `simdgroup_matrix`
-intrinsics found only on Apple Silicon and builds on Apple's unified memory
-architecture. On an Intel Mac with discrete AMD GPUs none of that applies, so
-Ollama falls back to running models on the CPU. 
 
 ## Benchmarks
 
@@ -75,6 +69,15 @@ bench/              curated benchmark results
 ```
 
 ## Quick start
+
+Out of the box, Ollama on macOS accelerates inference through Apple's MLX
+framework, which targets M-series chips: it assumes the `simdgroup_matrix`
+intrinsics found only on Apple Silicon and builds on Apple's unified memory
+architecture. On an Intel Mac with discrete AMD GPUs none of that applies, so
+Ollama falls back to running models on the CPU. 
+
+
+
 
 ```sh
 scripts/bootstrap.sh              # clone Ollama + llama.cpp at the pinned versions
