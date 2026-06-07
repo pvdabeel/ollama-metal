@@ -7,6 +7,7 @@ Radeon Pro W6800X Duo card(s)</b>.
 - Enables Ollama to detect one or more AMD Radeon dies and use them for GGUF
   Metal inference, running a separate LLM on each.
 - Enables Ollama to split a single large model across dies, pooling their
+  memory (~128 GB total) to run models too big for one card.
 - Enables Ollama to detect and use the AMD Infinity Fabric linking the cards for
   direct die-to-die VRAM transfers.
 
