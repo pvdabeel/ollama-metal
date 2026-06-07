@@ -61,7 +61,7 @@ ties the host path for both. Full data: <a href="docs/benchmarks.md">docs/benchm
 
 ## Supported hardware
 
-This is the only configuration it's built and tested against:
+This is the only configuration we have currently built and tested against:
 
 - Mac Pro 2019 (MacPro7,1), Intel Xeon W, macOS 26.x
 - 2x AMD Radeon PRO W6800X Duo = 4 dies, ~32 GB each, non-UMA
@@ -70,9 +70,9 @@ This is the only configuration it's built and tested against:
 ## Quick start
 
 ```sh
-scripts/bootstrap.sh     # clone Ollama + llama.cpp at the pinned versions
-scripts/apply-patch.sh   # apply patches/ onto the work/ checkouts
-scripts/build.sh         # build Ollama against the patched llama.cpp tree
+scripts/bootstrap.sh      # clone Ollama + llama.cpp at the pinned versions
+scripts/apply-patch.sh    # apply patches/ onto the work/ checkouts
+scripts/build.sh          # build Ollama against the patched llama.cpp tree
 scripts/bench.sh llama3.2 # correctness + speed vs CPU baseline
 ```
 
@@ -94,4 +94,4 @@ Then launch Ollama as usual.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
