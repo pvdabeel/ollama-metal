@@ -80,9 +80,9 @@ scripts/bench.sh llama3.2 # correctness + speed vs CPU baseline
 
 The desktop app from [ollama.com](https://ollama.com/download/Ollama.dmg) is a
 native menubar app: it spawns `Contents/Resources/ollama serve`, which spawns
-`Contents/Resources/llama-server`. On an Intel Mac it ships CPU-only, since the
-stock ggml Metal backend is gated to arm64. You can swap in our patched
-x86_64 builds to keep the menubar UI and get the GPUs:
+`Contents/Resources/llama-server`. 
+
+You can swap in the new kernel to keep the menubar UI and get the GPUs and the UI:
 
 ```sh
 scripts/build.sh         # produce the patched binaries
