@@ -1,7 +1,7 @@
 # ollama-metal
 
-Ollama code that enables running local LLMs on the Apple Mac Pro with AMD
-Radeon Pro W6800X Duo card(s).
+Ollama code that enables running local LLMs on the Apple Mac Pro with <b>AMD
+Radeon Pro W6800X Duo card(s)</b>.
 
 - Provides a new Metal kernel that runs GGUF models on AMD Radeon GPUs.
 - Enables Ollama to detect one or more AMD Radeon dies and use them for GGUF
