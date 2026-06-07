@@ -1,20 +1,22 @@
 # ollama-metal
 
-An Ollama patch that enables running local LLMs on the Apple Mac Pro with AMD
+Ollama code that enables running local LLMs on the Apple Mac Pro with AMD
 Radeon Pro W6800X Duo card(s).
 
-- Provides a new Metal kernel that runs GGUF models on AMD Radeon GPUs (which
-  lack the `simdgroup_matrix` intrinsics stock kernels assume).
+Out of the box, Ollama on macOS accelerates inference through Apple's MLX
+framework, which targets M-series chips: it assumes the `simdgroup_matrix`
+intrinsics found only on Apple Silicon and builds on Apple's unified memory
+architecture. On an Intel Mac with discrete AMD GPUs none of that applies, so
+Ollama falls back to running models on the CPU. This code makes those GPUs
+usable instead:
+
+- Provides a new Metal kernel that runs GGUF models on AMD Radeon GPUs.
 - Enables Ollama to detect one or more AMD Radeon dies and use them for GGUF
   Metal inference, running a separate LLM on each.
 - Enables Ollama to split a single large model across dies, pooling their
   memory (~128 GB total) to run models too big for one card.
 - Enables Ollama to detect and use the AMD Infinity Fabric linking the cards for
   direct die-to-die VRAM transfers.
-
-Built as a small set of patches on top of pinned upstream Ollama and llama.cpp
-(not a fork), porting the AMD-friendly Metal kernels from
-[`Basten7/iRon-Llama`](https://github.com/Basten7/iRon-Llama).
 
 ## Benchmarks
 
@@ -109,6 +111,12 @@ A few things to know:
 - Re-run `install-app.sh` after every Ollama update, because the updater puts
   the stock CPU-only binaries back. If the new app version doesn't match
   `OLLAMA_VERSION`, the script will tell you to re-pin and rebuild first.
+
+
+
+Built as a small set of patches on top of pinned upstream Ollama and llama.cpp
+(not a fork), porting the AMD-friendly Metal kernels from
+[`Basten7/iRon-Llama`](https://github.com/Basten7/iRon-Llama).
 
 ## License
 
