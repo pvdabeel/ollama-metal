@@ -1,24 +1,22 @@
 # ollama-metal
 
-GPU-accelerated GGUF inference in **Ollama** on **Intel Macs with discrete AMD
-(Metal 3) GPUs**, plus multi-GPU (multi-die) support.
+An Ollama patch that enables running local LLMs on the Apple Mac Pro with AMD
+Radeon Pro W6800X Duo card(s).
 
-This is a small, re-appliable **patch set** layered on pinned upstream versions
-of Ollama and llama.cpp - not a fork. It ports the AMD-friendly Metal kernels
-from [`Basten7/iRon-Llama`](https://github.com/Basten7/iRon-Llama) onto the
-llama.cpp version Ollama pins, re-enables the Metal backend for `x86_64`, and
-teaches Ollama's GPU discovery/scheduler about the AMD dies.
+- Provides a new Metal kernel that runs GGUF models on AMD Radeon GPUs (which
+  lack the `simdgroup_matrix` intrinsics stock kernels assume).
+- Enables Ollama to detect one or more AMD Radeon dies and use them for GGUF
+  Metal inference, running a separate LLM on each.
+- Enables Ollama to split a single large model across dies, pooling their
+  memory (~128 GB total) to run models too big for one card.
+- Enables Ollama to detect and use the AMD Infinity Fabric linking the cards for
+  direct die-to-die VRAM transfers.
 
-## Why
+Built as a small set of patches on top of pinned upstream Ollama and llama.cpp
+(not a fork), porting the AMD-friendly Metal kernels from
+[`Basten7/iRon-Llama`](https://github.com/Basten7/iRon-Llama).
 
-On an Intel Mac Pro with AMD Radeon Pro W6800X GPUs, stock Ollama runs GGUF
-models CPU-only:
-- Ollama's Mac GPU path moved to MLX (Apple Silicon only); its ggml Metal
-  backend is gated to arm64.
-- Even stock llama.cpp Metal is ~2 t/s on these GPUs (no `simdgroup_matrix`).
-
-The iRon-Llama kernels (threadgroup-tiled GEMM, `has_simdgroup_mm=false`) fix
-this.
+## Benchmarks
 
 <table>
 <tr>
@@ -47,71 +45,22 @@ this.
 </table>
 
 <sub>t/s @ temp 0. <b>tg host</b> = default host-mediated copy; <b>tg fabric</b> =
-Infinity Fabric peer copy (`GGML_METAL_PEER_ENABLE`) &mdash; a tie, see Phase D.
+Infinity Fabric peer copy (`GGML_METAL_PEER_ENABLE`), which comes out a tie.
 Full data: <a href="docs/benchmarks.md">docs/benchmarks.md</a></sub>
 
 </td>
 </tr>
 </table>
 
-## What this patch set does
+## Supported hardware
 
-Getting these GPUs useful took four increments. Each is a small, isolated patch
-(see [`patches/`](patches/) and [`docs/architecture.md`](docs/architecture.md)):
-
-- **Phase A — correct + fast single-die.** Two root causes, both wrongly
-  blamed on the kernels at first:
-  - *Correctness.* The Metal backend's **concurrent command-buffer dispatch**
-    corrupts intermediate tensors on discrete AMD GPUs (every op passes
-    `test-backend-ops` individually; only the concurrent graph is wrong). We
-    default `use_concurrency = false` on non-UMA devices.
-  - *Performance.* Ollama assumed Metal ⇒ unified memory and left weights
-    **mmap'd in host RAM**, so the GPU streamed them over PCIe every token
-    (~2 t/s). Disabling mmap on discrete Metal loads weights into VRAM
-    (~65× generation speedup). The iRon-Llama threadgroup-tiled `mul_mm` adds
-    ~12× prompt-eval on top.
-- **Phase B — multi-die, one model per die.** The dual W6800X Duo cards are
-  **4 separate GPU dies**. Stock ggml-metal always bound to the system default
-  device; we map each ggml device to a distinct `MTLCopyAllDevices()[i]`, teach
-  Ollama's discovery to recognise the `MTL0..MTL3` dies, pin a runner to one die
-  (`GGML_METAL_DEVICE_INDEX`), and fix per-die VRAM accounting. One
-  `ollama serve` now runs a different model on each die (~128 GB total).
-- **Phase C — cross-die layer split for models >32 GB.** A Metal blit can't
-  cross physical `MTLDevice`s, so cross-die tensor copies fall back to a
-  host-mediated path (bounce-buffered `get`/`set`). `-sm layer` /
-  `OLLAMA_SCHED_SPREAD` then split one model across dies. Overhead is modest:
-  ~75 → ~70 → ~60 t/s for 1 / 2 / 4-die splits.
-
-### Infinity Fabric (Phase D, opt-in)
-
-The two W6800X Duo MPX modules are linked by **AMD Infinity Fabric**, and macOS
-exposes it: all four dies report an identical **Metal peer group**
-(`peerGroupID`, `peerCount = 4`). That lets a die read another die's VRAM
-directly over the fabric via a *remote buffer view*
-(`newRemoteBufferViewForDevice:`) instead of bouncing through host RAM.
-
-We implemented it and measured it honestly:
-
-- It is **correct** and **~9× faster as a raw transfer** (~26 vs ~3 GB/s for a
-  256 MB block).
-- But it gives **no measurable inference speedup** (70.1 peer vs 70.3 host t/s
-  on a 2-die split). Layer-split inference only moves the residual stream across
-  the boundary (~10–20 KB/token), so the cost is submission/sync **latency, not
-  bandwidth** — the fabric's bandwidth has nothing to bite on.
-
-So the peer copy is kept **off by default** and enabled with
-`GGML_METAL_PEER_ENABLE` (useful for copy-heavy splits or experimentation).
-Note: there is **no Ollama or llama.cpp flag for Infinity Fabric** — the only
-stock peer-to-peer knobs are CUDA-specific; Phase D is the only way it is
-exercised here.
-
-## Target hardware (only supported config)
+This is the only configuration it's built and tested against:
 
 - Mac Pro 2019 (MacPro7,1), Intel Xeon W, macOS 26.x
 - 2x AMD Radeon PRO W6800X Duo = 4 dies, ~32 GB each, non-UMA
 - Xcode + Metal, Go (MacPorts), MacPorts cmake/ninja/git
 
-## Layout
+## Repo layout
 
 ```
 LLAMA_CPP_VERSION   pinned upstream llama.cpp tag we patch (mirrors Ollama)
@@ -124,22 +73,22 @@ scripts/            env / bootstrap / apply-patch / build / bench / install-app
 bench/              curated benchmark results
 ```
 
-## Quick start (once patches land)
+## Quick start
 
 ```sh
-scripts/bootstrap.sh             # clone Ollama + llama.cpp at the pinned versions
-scripts/apply-patch.sh           # apply patches/ onto the work/ checkouts
+scripts/bootstrap.sh              # clone Ollama + llama.cpp at the pinned versions
+scripts/apply-patch.sh            # apply patches/ onto the work/ checkouts
 BUILD_MODE=local scripts/build.sh # build Ollama against the patched llama.cpp tree
-scripts/bench.sh llama3.2        # correctness + speed vs CPU baseline
+scripts/bench.sh llama3.2         # correctness + speed vs CPU baseline
 ```
 
-## Use it with the official Ollama.app (menubar UI)
+## Using it with the official Ollama.app
 
 The desktop app from [ollama.com](https://ollama.com/download/Ollama.dmg) is a
-native menubar app that spawns `Contents/Resources/ollama serve`, which spawns
-`Contents/Resources/llama-server`. On an Intel Mac it ships **CPU-only** (the
-stock ggml Metal backend is gated to arm64). Swap in our patched, self-contained
-x86_64 builds to get the nice UI **and** the AMD GPUs:
+native menubar app: it spawns `Contents/Resources/ollama serve`, which spawns
+`Contents/Resources/llama-server`. On an Intel Mac it ships CPU-only, since the
+stock ggml Metal backend is gated to arm64. You can swap in our patched
+x86_64 builds to keep the menubar UI and get the GPUs:
 
 ```sh
 BUILD_MODE=local scripts/build.sh   # produce the patched binaries
@@ -147,29 +96,19 @@ scripts/install-app.sh              # back up + replace the app's ollama + llama
                                     # (ad-hoc re-signs them; version-checked)
 ```
 
-Then launch Ollama normally. Verify with `tail -f ~/.ollama/logs/server.log`
-(look for `MTL0..MTL3` and `mmap = false`). Revert any time with
-`scripts/uninstall-app.sh`.
+Then launch Ollama as usual. To confirm it took, watch
+`~/.ollama/logs/server.log` for `MTL0..MTL3` and `mmap = false`. Revert any time
+with `scripts/uninstall-app.sh`.
 
-- Both binaries are replaced: `llama-server` (Metal compute) and the `ollama`
-  Go server (discrete-Metal mmap disable + multi-die discovery).
-- macOS protects `/Applications/Ollama.app`; grant the permission prompt (or run
-  the script with the needed Full Disk Access) the first time.
-- **Re-run `install-app.sh` after every Ollama update** — the updater restores
-  the stock CPU-only binaries. If the new app version differs from
-  `OLLAMA_VERSION`, the script tells you to re-pin and rebuild first.
+A few things to know:
 
-## Status
-
-- [x] Phase 0: pins located, integration point identified
-      (`OLLAMA_LLAMA_CPP_SOURCE` override), reference kernels vendored.
-- [x] Phase A: single-die AMD Metal inside Ollama (un-gate + kernel port +
-      discovery); correct + fast by default.
-- [x] Phase B: multi-die concurrent serving (one model per die); all 4 dies
-      discovered as `MTL0..MTL3` (~128 GB total).
-- [x] Phase C: single-model layer split across dies for >32 GB (host-mediated).
-- [x] Phase D (opt-in): Infinity Fabric peer copy for cross-die transfers
-      (`GGML_METAL_PEER_ENABLE`); correct, but no inference speedup vs Phase C.
+- Both binaries get replaced: `llama-server` (the Metal compute) and the
+  `ollama` Go server (the discrete-Metal mmap disable and multi-die discovery).
+- macOS protects `/Applications/Ollama.app`, so the first run needs the
+  permission prompt (or Full Disk Access for the script).
+- Re-run `install-app.sh` after every Ollama update, because the updater puts
+  the stock CPU-only binaries back. If the new app version doesn't match
+  `OLLAMA_VERSION`, the script will tell you to re-pin and rebuild first.
 
 ## License
 
