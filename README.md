@@ -7,19 +7,10 @@ Radeon Pro W6800X Duo card(s)</b>.
 - Enables Ollama to detect one or more AMD Radeon dies and use them for GGUF
   Metal inference, running a separate LLM on each.
 - Enables Ollama to split a single large model across dies, pooling their
-  memory (~128 GB total) to run models too big for one card.
 - Enables Ollama to detect and use the AMD Infinity Fabric linking the cards for
   direct die-to-die VRAM transfers.
 
 ## Benchmarks
-
-<table>
-<tr>
-<td width="44%" valign="top">
-<img src="docs/images/mac-pro-w6800x-duo.png" width="100%" alt="Mac Pro (2019) with two AMD Radeon Pro W6800X Duo MPX modules = 4 GPU dies">
-<sub>Mac Pro (2019), two Radeon Pro W6800X Duo MPX modules &mdash; <b>4 GPU dies</b>, ~32&nbsp;GB each, non-UMA, linked by Infinity Fabric.</sub>
-</td>
-<td valign="top">
 
 All numbers below are the same model &mdash; **llama3.2 3B Q4_K_M** &mdash;
 measured through the patched `llama-server` `/completion` endpoint at
@@ -49,10 +40,6 @@ more dies, while pp <i>rises</i> (473 &rarr; 539) since prompt eval is
 compute-bound and parallelises. Split only for models &gt;32&nbsp;GB.
 <b>tg fabric</b> (Infinity Fabric peer copy, <code>GGML_METAL_PEER_ENABLE</code>)
 ties the host path. Full data: <a href="docs/benchmarks.md">docs/benchmarks.md</a></sub>
-
-</td>
-</tr>
-</table>
 
 **Larger models** &mdash; same `llama-server` harness, VRAM-resident
 (`--no-mmap`), t/s @ temp 0:
