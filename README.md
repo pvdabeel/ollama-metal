@@ -67,35 +67,13 @@ This is the only configuration it's built and tested against:
 - 2x AMD Radeon PRO W6800X Duo = 4 dies, ~32 GB each, non-UMA
 - Xcode + Metal, Go (MacPorts), MacPorts cmake/ninja/git
 
-## Repo layout
-
-```
-LLAMA_CPP_VERSION   pinned upstream llama.cpp tag we patch (mirrors Ollama)
-OLLAMA_VERSION      pinned Ollama tag + commit we integrate with
-.cursorrules        architecture + repatching strategy (read this first)
-docs/               architecture.md, repatching.md, benchmarks.md
-patches/            git patches: patches/llama-cpp/ and patches/ollama/
-reference/          verbatim iRon-Llama b6123 kernels (MIT) for provenance/port
-scripts/            env / bootstrap / apply-patch / build / bench / install-app
-bench/              curated benchmark results
-```
-
 ## Quick start
 
-Out of the box, Ollama on macOS accelerates inference through Apple's MLX
-framework, which targets M-series chips: it assumes the `simdgroup_matrix`
-intrinsics found only on Apple Silicon and builds on Apple's unified memory
-architecture. On an Intel Mac with discrete AMD GPUs none of that applies, so
-Ollama falls back to running models on the CPU. 
-
-
-
-
 ```sh
-scripts/bootstrap.sh              # clone Ollama + llama.cpp at the pinned versions
-scripts/apply-patch.sh            # apply patches/ onto the work/ checkouts
-BUILD_MODE=local scripts/build.sh # build Ollama against the patched llama.cpp tree
-scripts/bench.sh llama3.2         # correctness + speed vs CPU baseline
+scripts/bootstrap.sh     # clone Ollama + llama.cpp at the pinned versions
+scripts/apply-patch.sh   # apply patches/ onto the work/ checkouts
+scripts/build.sh         # build Ollama against the patched llama.cpp tree
+scripts/bench.sh llama3.2 # correctness + speed vs CPU baseline
 ```
 
 ## Using it with the official Ollama.app
@@ -107,33 +85,13 @@ stock ggml Metal backend is gated to arm64. You can swap in our patched
 x86_64 builds to keep the menubar UI and get the GPUs:
 
 ```sh
-BUILD_MODE=local scripts/build.sh   # produce the patched binaries
-scripts/install-app.sh              # back up + replace the app's ollama + llama-server
-                                    # (ad-hoc re-signs them; version-checked)
+scripts/build.sh         # produce the patched binaries
+scripts/install-app.sh   # back up + replace the app's ollama + llama-server
+                         # (ad-hoc re-signs them; version-checked)
 ```
 
-Then launch Ollama as usual. To confirm it took, watch
-`~/.ollama/logs/server.log` for `MTL0..MTL3` and `mmap = false`. Revert any time
-with `scripts/uninstall-app.sh`.
-
-A few things to know:
-
-- Both binaries get replaced: `llama-server` (the Metal compute) and the
-  `ollama` Go server (the discrete-Metal mmap disable and multi-die discovery).
-- macOS protects `/Applications/Ollama.app`, so the first run needs the
-  permission prompt (or Full Disk Access for the script).
-- Re-run `install-app.sh` after every Ollama update, because the updater puts
-  the stock CPU-only binaries back. If the new app version doesn't match
-  `OLLAMA_VERSION`, the script will tell you to re-pin and rebuild first.
-
-
-
-Built as a small set of patches on top of pinned upstream Ollama and llama.cpp
-(not a fork), porting the AMD-friendly Metal kernels from
-[`Basten7/iRon-Llama`](https://github.com/Basten7/iRon-Llama).
+Then launch Ollama as usual.
 
 ## License
 
-MIT. Derives from MIT-licensed llama.cpp, Ollama, and iRon-Llama; their
-attributions are retained (see `LICENSE` and
-`reference/iron-llama-b6123/UPSTREAM-README.md`).
+MIT. See `LICENSE`.

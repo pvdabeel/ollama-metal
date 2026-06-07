@@ -19,18 +19,18 @@
 # condition to `if(APPLE)`. Hence this script needs no GGML_METAL flag.
 #
 # Modes:
-#   BUILD_MODE=control  (default) stock build -> CPU-only x86_64 control.
-#                       Lets FetchContent clone+compat-patch llama.cpp b9509.
-#   BUILD_MODE=local    build against our patched work/llama.cpp tree.
+#   BUILD_MODE=local    (default) build against our patched work/llama.cpp tree.
 #                       Requires the Ollama compat patch already applied to
 #                       that tree (apply-patch.sh) + SKIP_COMPAT flag, because
 #                       setting OLLAMA_LLAMA_CPP_SOURCE disables auto-compat.
+#   BUILD_MODE=control  stock build -> CPU-only x86_64 baseline for A/B.
+#                       Lets FetchContent clone+compat-patch llama.cpp b9509.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 [ -d "$OLLAMA_DIR/.git" ] || { echo "Run scripts/bootstrap.sh first"; exit 1; }
 
-BUILD_MODE="${BUILD_MODE:-control}"
+BUILD_MODE="${BUILD_MODE:-local}"
 BUILD_DIR="$WORK_DIR/build-amd64"
 INSTALL_PREFIX="$WORK_DIR/dist/darwin-amd64"
 mkdir -p "$BUILD_DIR" "$INSTALL_PREFIX"

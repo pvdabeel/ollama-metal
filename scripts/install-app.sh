@@ -25,8 +25,8 @@ SRC_OLLAMA="$DIST/bin/ollama"
 SRC_SERVER="$DIST/lib/ollama/llama-server"
 
 [ -d "$APP" ] || { echo "ERROR: $APP not found (install Ollama.dmg from ollama.com first)"; exit 1; }
-[ -x "$SRC_OLLAMA" ] || { echo "ERROR: $SRC_OLLAMA missing — run BUILD_MODE=local scripts/build.sh first"; exit 1; }
-[ -x "$SRC_SERVER" ] || { echo "ERROR: $SRC_SERVER missing — run BUILD_MODE=local scripts/build.sh first"; exit 1; }
+[ -x "$SRC_OLLAMA" ] || { echo "ERROR: $SRC_OLLAMA missing — run scripts/build.sh first"; exit 1; }
+[ -x "$SRC_SERVER" ] || { echo "ERROR: $SRC_SERVER missing — run scripts/build.sh first"; exit 1; }
 
 # --- version sanity: app must match the version we built against ---------------
 APP_VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo '?')"
