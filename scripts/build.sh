@@ -24,7 +24,8 @@
 #                       that tree (apply-patch.sh) + SKIP_COMPAT flag, because
 #                       setting OLLAMA_LLAMA_CPP_SOURCE disables auto-compat.
 #   BUILD_MODE=control  stock build -> CPU-only x86_64 baseline for A/B.
-#                       Lets FetchContent clone+compat-patch llama.cpp b9509.
+#                       Lets FetchContent clone+compat-patch the pinned
+#                       llama.cpp (LLAMA_CPP_VERSION).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -43,7 +44,7 @@ if [ "$BUILD_MODE" = "local" ]; then
   # Compat sources are only auto-linked when we tell CMake the tree is prepared.
   CMAKE_EXTRA+=( -DOLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH=ON )
 else
-  echo "BUILD_MODE=control: stock build (FetchContent llama.cpp b9509, CPU-only on x86_64)"
+  echo "BUILD_MODE=control: stock build (FetchContent llama.cpp $LLAMA_CPP_VERSION, CPU-only on x86_64)"
 fi
 
 echo "Configuring (x86_64) ..."
