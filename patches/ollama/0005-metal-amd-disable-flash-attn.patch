@@ -1,0 +1,43 @@
+diff --git a/llm/llama_server.go b/llm/llama_server.go
+index 1340d663..261a4424 100644
+--- a/llm/llama_server.go
++++ b/llm/llama_server.go
+@@ -602,8 +602,38 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
+ 	return params
+ }
+ 
++// metalDiscreteAMDFlashAttentionBroken reports whether the selected devices
++// include a discrete-AMD "Metal" GPU on which the ggml-metal flash-attention
++// kernels miscompute.
++//
++// ollama-metal: on Intel Macs the discrete AMD dies (e.g. W6800X) are labelled
++// Library=="Metal" by our discovery patch, but they lack simdgroup_matrix and
++// the reduction-based ("vec") FA kernel produces garbage output on RDNA2 (see
++// docs/flash-attention-amd.md). Apple-Silicon Metal (arm64) is unaffected and
++// keeps working. This only matters on x86_64. The experimental FA path can
++// still be forced with GGML_METAL_AMD_FA=1 for kernel development.
++func metalDiscreteAMDFlashAttentionBroken(gpus []ml.DeviceInfo) bool {
++	if runtime.GOARCH == "arm64" || os.Getenv("GGML_METAL_AMD_FA") != "" {
++		return false
++	}
++	for _, gpu := range gpus {
++		if gpu.Name == "Metal" || gpu.Library == "Metal" {
++			return true
++		}
++	}
++	return false
++}
++
+ // LlamaServerFlashAttention resolves the flash-attention mode passed to llama-server.
+ func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
++	// ollama-metal: never enable FA on discrete AMD Metal (garbage output),
++	// even if the user set OLLAMA_FLASH_ATTENTION=1 (a common recommendation
++	// elsewhere). FA gives no speedup on this hardware; only GGML_METAL_AMD_FA=1
++	// opts into the known-broken experimental path.
++	if metalDiscreteAMDFlashAttentionBroken(gpus) {
++		return ml.FlashAttentionDisabled
++	}
++
+ 	enabled := envconfig.FlashAttention(false)
+ 	userSet := enabled == envconfig.FlashAttention(true)
+ 	if userSet {
