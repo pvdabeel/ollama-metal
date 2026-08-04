@@ -1,0 +1,140 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index 38f331587..bc375830b 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -281,6 +281,15 @@ ggml_metal_device_t ggml_metal_device_get(int device);
+ // count). Used to default the registered backend-device count to one per die.
+ int ggml_metal_device_count(void);
+ 
++// ollama-metal: on discrete AMD GPUs the matrix ("mm") flash-attention kernel
++// cannot run (it needs simdgroup_matrix, which these GPUs lack) but the
++// reduction-based ("vec") kernel can. When set, the ops layer forces the vec
++// FA path for every batch size instead of only small (decode) batches. The
++// value is a device capability (has_simdgroup_reduction && !has_simdgroup_mm)
++// recorded during supports_op; it is uniform across our identical dies.
++void ggml_metal_set_force_fa_vec(int v);
++int  ggml_metal_get_force_fa_vec(void);
++
+ void * ggml_metal_device_get_obj  (ggml_metal_device_t dev); // id<MTLDevice>
+ void * ggml_metal_device_get_queue(ggml_metal_device_t dev); // id<MTLCommandQueue>
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 76b3e041b..7e58e0d1b 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1107,11 +1107,34 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
+     }
+ }
+ 
++// ollama-metal: see header. Records whether flash attention must use the
++// reduction-based ("vec") kernel because this device lacks simdgroup matrix
++// mul. A plain int is sufficient: it only ever holds 0/1 and is set to the
++// same value on every supports_op call for our uniform dies.
++static int g_ggml_metal_force_fa_vec = 0;
++void ggml_metal_set_force_fa_vec(int v) { g_ggml_metal_force_fa_vec = v ? 1 : 0; }
++int  ggml_metal_get_force_fa_vec(void)  { return g_ggml_metal_force_fa_vec; }
++
+ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_tensor * op) {
+     const bool has_simdgroup_mm        = dev->props.has_simdgroup_mm;
+     const bool has_simdgroup_reduction = dev->props.has_simdgroup_reduction;
+     const bool has_bfloat              = dev->props.has_bfloat;
+ 
++    // ollama-metal: FA-on-AMD via the GPU "vec" kernel is OPT-IN and OFF by
++    // default. Enabling the gate below runs attention on the GPU (~2x tg) but
++    // the upstream b10091 vec kernel currently MISCOMPUTES on RDNA2 (W6800X):
++    // even a single simdgroup / single workgroup / single query produces
++    // incoherent output, so each SIMD primitive is fine in isolation but the
++    // online-softmax composition is wrong on this GPU (the exact wall the
++    // iRon-Llama-RC2 / ToshLLM projects solved with a reworked vec kernel).
++    // Until that kernel is ported, keep FA on the CPU-fallback path by default
++    // (llama.cpp auto-disables FA when supports_op returns false), which is
++    // correct and matches the validated bump. Set GGML_METAL_AMD_FA=1 to enable
++    // the (currently incorrect) GPU path for kernel-correctness development;
++    // GGML_METAL_FA_VEC_NSG / _NWG then tune the simdgroup/workgroup split.
++    const bool amd_fa_optin = getenv("GGML_METAL_AMD_FA") != NULL;
++    ggml_metal_set_force_fa_vec(has_simdgroup_reduction && !has_simdgroup_mm && amd_fa_optin);
++
+     if (!has_bfloat) {
+         if (op->type == GGML_TYPE_BF16) {
+             return false;
+@@ -1322,7 +1345,28 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+                 default:
+                     return false;
+             }
+-            return has_simdgroup_mm; // TODO: over-restricted for vec-kernels
++            // ollama-metal: upstream gates FA on has_simdgroup_mm, which is false
++            // on discrete AMD GPUs and forces attention onto the CPU (generation
++            // collapses at long context / with a quantized KV cache). The
++            // reduction-based "vec" FA kernel needs only simdgroup_reduction,
++            // which these GPUs have, so enable FA when the vec kernel is
++            // instantiated for this shape. The vec kernel exists for head dims
++            // (dk) 32/64/96/128/192/256/320/512/576 with matching dv (V head dim
++            // may differ only for the MLA-style 192->128, 320->256, 576->512
++            // cases). Shapes outside that set keep the CPU fallback (no regression)
++            // because the matrix "mm" FA kernel that would serve them crashes here.
++            if (!has_simdgroup_mm && has_simdgroup_reduction && getenv("GGML_METAL_AMD_FA") != NULL) {
++                const int64_t dk = op->src[0]->ne[0]; // Q/K head dim
++                const int64_t dv = op->src[2]->ne[0]; // V head dim
++                const bool dk_ok = dk == 32  || dk == 64  || dk == 96  || dk == 128 ||
++                                   dk == 192 || dk == 256 || dk == 320 || dk == 512 || dk == 576;
++                const bool dv_ok = dv == dk ||
++                                   (dk == 192 && dv == 128) ||
++                                   (dk == 320 && dv == 256) ||
++                                   (dk == 576 && dv == 512);
++                return dk_ok && dv_ok;
++            }
++            return has_simdgroup_mm;
+         case GGML_OP_SSM_CONV:
+         case GGML_OP_SSM_SCAN:
+             return has_simdgroup_reduction;
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index fca0a9507..a84db6b24 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -11,6 +11,7 @@
+ #include <cassert>
+ #include <algorithm>
+ #include <limits>
++#include <cstdlib> // ollama-metal: getenv/atoi for FA vec nsg/nwg tuning knobs
+ #include <cmath>
+ 
+ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
+@@ -2536,6 +2537,16 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
+     const int64_t ne00 = op->src[0]->ne[0]; // head size
+     const int64_t ne01 = op->src[0]->ne[1]; // batch size
+ 
++    // ollama-metal: on discrete AMD GPUs the non-vec ("mm") FA kernel uses
++    // simdgroup_matrix and crashes, so the vec kernel is the ONLY usable path
++    // for every batch size (prefill included). supports_op has already
++    // restricted FLASH_ATTN_EXT to vec-instantiated shapes on such devices, so
++    // it is safe to force the vec kernel here. This also keeps the memory-sizing
++    // callers (extra_blk) consistent with the dispatched kernel.
++    if (ggml_metal_get_force_fa_vec()) {
++        return ne00 % 32 == 0;
++    }
++
+     // use vec kernel if the batch size is small and if the head size is supported
+     return (ne01 < 20) && (ne00 % 32 == 0);
+ }
+@@ -2968,7 +2979,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+         // workgroups
+         // each workgroup handles nsg*nkpsg cache values
+         int32_t nwg = 1;
+-        if (false) {
++        if (ggml_metal_get_force_fa_vec()) {
++            // ollama-metal: discrete AMD GPUs produce garbage with the default
++            // multi-workgroup KV split + vec_reduce combine path. Use a single
++            // workgroup that writes results directly to dst (no reduce kernel).
++            // Parallelism comes from nsg simdgroups within the one threadgroup.
++            // nsg/nwg are overridable at runtime for tuning (cf. iRon-Llama-RC2
++            // GGML_METAL_FA_VEC_NSG / _NWG); defaults chosen for correctness.
++            nwg = 1;
++            nsg = 1;
++            const char * e_nsg = getenv("GGML_METAL_FA_VEC_NSG");
++            const char * e_nwg = getenv("GGML_METAL_FA_VEC_NWG");
++            if (e_nsg) { nsg = atoi(e_nsg); if (nsg < 1) nsg = 1; }
++            if (e_nwg) { nwg = atoi(e_nwg); if (nwg < 1) nwg = 1; }
++        } else if (false) {
+             // for small KV caches, we could launch a single workgroup and write the results directly to dst/
+             // however, this does not lead to significant improvement, so disabled
+             nwg = 1;
