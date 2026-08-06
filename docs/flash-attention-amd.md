@@ -1,5 +1,12 @@
 # Flash Attention on discrete AMD (Metal) — status & findings
 
+> **Status (Ollama v0.32.6 / llama.cpp b10242):** FA on discrete AMD remains
+> **opt-in and OFF by default**. The bump from b10091 forward-ported patch 05
+> unchanged (the gate/force-vec code re-applies cleanly); the vec-kernel
+> correctness findings below were characterised on `b10091` and were **not**
+> re-validated on `b10242` (the default coherent CPU-fallback path is what the
+> bump was validated against). Set `GGML_METAL_AMD_FA=1` only for kernel work.
+
 Goal: run attention on the GPU (instead of the CPU fallback) on the AMD
 W6800X dies, which unlocks the biggest documented wins on this hardware:
 long-context decode throughput and a **GPU-resident quantized KV cache**

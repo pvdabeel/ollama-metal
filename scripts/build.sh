@@ -52,6 +52,7 @@ cmake -S "$OLLAMA_DIR" -B "$BUILD_DIR" \
   -DCMAKE_OSX_ARCHITECTURES=x86_64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
   -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+  -DOLLAMA_VERSION="$OLLAMA_TAG" \
   "${CMAKE_EXTRA[@]}"
 
 echo "Building (native payload + Go binary) ..."

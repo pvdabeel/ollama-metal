@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index 38f331587..bc375830b 100644
+index f7091f780..f72a37a62 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -281,6 +281,15 @@ ggml_metal_device_t ggml_metal_device_get(int device);
+@@ -285,6 +285,15 @@ ggml_metal_device_t ggml_metal_device_get(int device);
  // count). Used to default the registered backend-device count to one per die.
  int ggml_metal_device_count(void);
  
@@ -19,10 +19,10 @@ index 38f331587..bc375830b 100644
  void * ggml_metal_device_get_queue(ggml_metal_device_t dev); // id<MTLCommandQueue>
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 76b3e041b..7e58e0d1b 100644
+index dacf62a8c..1949e2f38 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1107,11 +1107,34 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
+@@ -1142,11 +1142,34 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
      }
  }
  
@@ -41,7 +41,7 @@ index 76b3e041b..7e58e0d1b 100644
  
 +    // ollama-metal: FA-on-AMD via the GPU "vec" kernel is OPT-IN and OFF by
 +    // default. Enabling the gate below runs attention on the GPU (~2x tg) but
-+    // the upstream b10091 vec kernel currently MISCOMPUTES on RDNA2 (W6800X):
++    // the upstream reduction-based vec kernel MISCOMPUTES on RDNA2 (W6800X):
 +    // even a single simdgroup / single workgroup / single query produces
 +    // incoherent output, so each SIMD primitive is fine in isolation but the
 +    // online-softmax composition is wrong on this GPU (the exact wall the
@@ -57,11 +57,10 @@ index 76b3e041b..7e58e0d1b 100644
      if (!has_bfloat) {
          if (op->type == GGML_TYPE_BF16) {
              return false;
-@@ -1322,7 +1345,28 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1367,6 +1390,27 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  default:
                      return false;
              }
--            return has_simdgroup_mm; // TODO: over-restricted for vec-kernels
 +            // ollama-metal: upstream gates FA on has_simdgroup_mm, which is false
 +            // on discrete AMD GPUs and forces attention onto the CPU (generation
 +            // collapses at long context / with a quantized KV cache). The
@@ -83,12 +82,11 @@ index 76b3e041b..7e58e0d1b 100644
 +                                   (dk == 576 && dv == 512);
 +                return dk_ok && dv_ok;
 +            }
-+            return has_simdgroup_mm;
-         case GGML_OP_SSM_CONV:
-         case GGML_OP_SSM_SCAN:
-             return has_simdgroup_reduction;
+             return has_simdgroup_mm; // TODO: over-restricted for vec-kernels
+         case GGML_OP_LIGHTNING_INDEXER:
+             if (op->src[0]->ne[0] != OP_LIGHTNING_INDEXER_DK ||
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index fca0a9507..a84db6b24 100644
+index 1227b8ce3..b8795f69a 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -11,6 +11,7 @@
@@ -99,7 +97,7 @@ index fca0a9507..a84db6b24 100644
  #include <cmath>
  
  static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
-@@ -2536,6 +2537,16 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
+@@ -2799,6 +2800,16 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
      const int64_t ne00 = op->src[0]->ne[0]; // head size
      const int64_t ne01 = op->src[0]->ne[1]; // batch size
  
@@ -116,7 +114,7 @@ index fca0a9507..a84db6b24 100644
      // use vec kernel if the batch size is small and if the head size is supported
      return (ne01 < 20) && (ne00 % 32 == 0);
  }
-@@ -2968,7 +2979,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3231,7 +3242,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // workgroups
          // each workgroup handles nsg*nkpsg cache values
          int32_t nwg = 1;
