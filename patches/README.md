@@ -74,8 +74,11 @@ Infinity Fabric; the only stock P2P knobs are CUDA-specific.)
   **cross-die copy** in `ggml_metal_buffer_cpy_tensor`: host-mediated by default
   (Phase C), or — when `GGML_METAL_PEER_ENABLE` is set and both dies share a
   Metal peer group — a direct Infinity Fabric peer blit via a remote buffer view
-  (Phase D, opt-in, see status above); and the opt-in AMD FA-vec gate
-  (`ggml_metal_set_force_fa_vec`, `GGML_METAL_AMD_FA`).
+  (Phase D, opt-in, see status above); the opt-in AMD FA-vec gate
+  (`ggml_metal_set_force_fa_vec`, `GGML_METAL_AMD_FA`); and deferred /
+  serialized Metal library compile on non-UMA so b10760's per-kind
+  `compile_all` does not hang AMD's compiler or trip Ollama's 30s discovery
+  watchdog.
 - `03-metal-tiled-mul-mm.patch` — **perf (optional).** Threadgroup-tiled
   `mul_mm`/dispatch for non-UMA (`kernels/mul_mm.metal` +
   `ggml_metal_op_mul_mat_use_mm`); ~12x faster prompt eval. NOT required for
