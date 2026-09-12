@@ -1,95 +1,8 @@
-diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index f7091f780..f72a37a62 100644
---- a/ggml/src/ggml-metal/ggml-metal-device.h
-+++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -285,6 +285,15 @@ ggml_metal_device_t ggml_metal_device_get(int device);
- // count). Used to default the registered backend-device count to one per die.
- int ggml_metal_device_count(void);
- 
-+// ollama-metal: on discrete AMD GPUs the matrix ("mm") flash-attention kernel
-+// cannot run (it needs simdgroup_matrix, which these GPUs lack) but the
-+// reduction-based ("vec") kernel can. When set, the ops layer forces the vec
-+// FA path for every batch size instead of only small (decode) batches. The
-+// value is a device capability (has_simdgroup_reduction && !has_simdgroup_mm)
-+// recorded during supports_op; it is uniform across our identical dies.
-+void ggml_metal_set_force_fa_vec(int v);
-+int  ggml_metal_get_force_fa_vec(void);
-+
- void * ggml_metal_device_get_obj  (ggml_metal_device_t dev); // id<MTLDevice>
- void * ggml_metal_device_get_queue(ggml_metal_device_t dev); // id<MTLCommandQueue>
- 
-diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index dacf62a8c..1949e2f38 100644
---- a/ggml/src/ggml-metal/ggml-metal-device.m
-+++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1142,11 +1142,34 @@ void ggml_metal_device_get_memory(ggml_metal_device_t dev, size_t * free, size_t
-     }
- }
- 
-+// ollama-metal: see header. Records whether flash attention must use the
-+// reduction-based ("vec") kernel because this device lacks simdgroup matrix
-+// mul. A plain int is sufficient: it only ever holds 0/1 and is set to the
-+// same value on every supports_op call for our uniform dies.
-+static int g_ggml_metal_force_fa_vec = 0;
-+void ggml_metal_set_force_fa_vec(int v) { g_ggml_metal_force_fa_vec = v ? 1 : 0; }
-+int  ggml_metal_get_force_fa_vec(void)  { return g_ggml_metal_force_fa_vec; }
-+
- bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_tensor * op) {
-     const bool has_simdgroup_mm        = dev->props.has_simdgroup_mm;
-     const bool has_simdgroup_reduction = dev->props.has_simdgroup_reduction;
-     const bool has_bfloat              = dev->props.has_bfloat;
- 
-+    // ollama-metal: FA-on-AMD via the GPU "vec" kernel is OPT-IN and OFF by
-+    // default. Enabling the gate below runs attention on the GPU (~2x tg) but
-+    // the upstream reduction-based vec kernel MISCOMPUTES on RDNA2 (W6800X):
-+    // even a single simdgroup / single workgroup / single query produces
-+    // incoherent output, so each SIMD primitive is fine in isolation but the
-+    // online-softmax composition is wrong on this GPU (the exact wall the
-+    // iRon-Llama-RC2 / ToshLLM projects solved with a reworked vec kernel).
-+    // Until that kernel is ported, keep FA on the CPU-fallback path by default
-+    // (llama.cpp auto-disables FA when supports_op returns false), which is
-+    // correct and matches the validated bump. Set GGML_METAL_AMD_FA=1 to enable
-+    // the (currently incorrect) GPU path for kernel-correctness development;
-+    // GGML_METAL_FA_VEC_NSG / _NWG then tune the simdgroup/workgroup split.
-+    const bool amd_fa_optin = getenv("GGML_METAL_AMD_FA") != NULL;
-+    ggml_metal_set_force_fa_vec(has_simdgroup_reduction && !has_simdgroup_mm && amd_fa_optin);
-+
-     if (!has_bfloat) {
-         if (op->type == GGML_TYPE_BF16) {
-             return false;
-@@ -1367,6 +1390,27 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
-                 default:
-                     return false;
-             }
-+            // ollama-metal: upstream gates FA on has_simdgroup_mm, which is false
-+            // on discrete AMD GPUs and forces attention onto the CPU (generation
-+            // collapses at long context / with a quantized KV cache). The
-+            // reduction-based "vec" FA kernel needs only simdgroup_reduction,
-+            // which these GPUs have, so enable FA when the vec kernel is
-+            // instantiated for this shape. The vec kernel exists for head dims
-+            // (dk) 32/64/96/128/192/256/320/512/576 with matching dv (V head dim
-+            // may differ only for the MLA-style 192->128, 320->256, 576->512
-+            // cases). Shapes outside that set keep the CPU fallback (no regression)
-+            // because the matrix "mm" FA kernel that would serve them crashes here.
-+            if (!has_simdgroup_mm && has_simdgroup_reduction && getenv("GGML_METAL_AMD_FA") != NULL) {
-+                const int64_t dk = op->src[0]->ne[0]; // Q/K head dim
-+                const int64_t dv = op->src[2]->ne[0]; // V head dim
-+                const bool dk_ok = dk == 32  || dk == 64  || dk == 96  || dk == 128 ||
-+                                   dk == 192 || dk == 256 || dk == 320 || dk == 512 || dk == 576;
-+                const bool dv_ok = dv == dk ||
-+                                   (dk == 192 && dv == 128) ||
-+                                   (dk == 320 && dv == 256) ||
-+                                   (dk == 576 && dv == 512);
-+                return dk_ok && dv_ok;
-+            }
-             return has_simdgroup_mm; // TODO: over-restricted for vec-kernels
-         case GGML_OP_LIGHTNING_INDEXER:
-             if (op->src[0]->ne[0] != OP_LIGHTNING_INDEXER_DK ||
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 1227b8ce3..b8795f69a 100644
+index bc8b3c8d4..2e1409c95 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -11,6 +11,7 @@
+@@ -12,6 +12,7 @@
  #include <cassert>
  #include <algorithm>
  #include <limits>
@@ -97,7 +10,16 @@ index 1227b8ce3..b8795f69a 100644
  #include <cmath>
  
  static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
-@@ -2799,6 +2800,16 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
+@@ -2480,7 +2481,7 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+         ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3);
+ 
+         ggml_metal_encoder_dispatch_threadgroups(enc, ((ne01 + r0ptg - 1)/r0ptg), ((ne11 + r1ptg - 1)/r1ptg), ne12*ne13, 32, nsg, 1);
+-    } else if (ggml_metal_op_mul_mat_use_mm(op, props_dev->has_simdgroup_mm)) {
++    } else if (ggml_metal_op_mul_mat_use_mm(op, props_dev->has_simdgroup_mm, props_dev->has_unified_memory)) {
+         //GGML_LOG_INFO("matrix: ne00 = %6d, ne01 = %6d, ne02 = %6d, ne11 = %6d, ne12 = %6d\n", ne00, ne01, ne02, ne11, ne12);
+ 
+         // some Metal matrix data types require aligned pointers
+@@ -2829,6 +2830,16 @@ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
      const int64_t ne00 = op->src[0]->ne[0]; // head size
      const int64_t ne01 = op->src[0]->ne[1]; // batch size
  
@@ -114,7 +36,7 @@ index 1227b8ce3..b8795f69a 100644
      // use vec kernel if the batch size is small and if the head size is supported
      return (ne01 < 20) && (ne00 % 32 == 0);
  }
-@@ -3231,7 +3242,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3455,7 +3466,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // workgroups
          // each workgroup handles nsg*nkpsg cache values
          int32_t nwg = 1;

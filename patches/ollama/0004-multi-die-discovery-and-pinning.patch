@@ -1,8 +1,8 @@
 diff --git a/discover/llama_server.go b/discover/llama_server.go
-index 7a79318e..fdfdd294 100644
+index ba8ace58..f7df0ee6 100644
 --- a/discover/llama_server.go
 +++ b/discover/llama_server.go
-@@ -465,7 +465,14 @@ func inferLibrary(name, description string) string {
+@@ -468,7 +468,14 @@ func inferLibrary(name, description string) string {
  		return "CUDA"
  	case strings.Contains(combined, "rocm") || strings.Contains(combined, "hip"):
  		return "ROCm"
@@ -18,32 +18,11 @@ index 7a79318e..fdfdd294 100644
  		return "Metal"
  	case strings.Contains(combined, "vulkan"):
  		return "Vulkan"
-diff --git a/llm/llama_server.go b/llm/llama_server.go
-index 85701351..fe671157 100644
---- a/llm/llama_server.go
-+++ b/llm/llama_server.go
-@@ -2640,6 +2640,16 @@ func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
- 	// --list-devices stdout, which matches the buffer log prefix.
- 	for _, gpu := range s.gpus {
- 		if gpu.DeviceID == id {
-+			// ollama-metal: when a runner is pinned to a single device, all of
-+			// its GPU footprint belongs to that device. A pinned Metal runner
-+			// (GGML_METAL_DEVICE_INDEX, g_devices=1) always labels its buffers
-+			// "MTL0" regardless of which physical die it bound to, so the
-+			// discovery name (e.g. "MTL2") won't match s.vramByDevice and the
-+			// per-name lookup returns 0 -- causing the scheduler to double-book
-+			// one die. Attribute the whole GPU footprint to the sole device.
-+			if len(s.gpus) == 1 {
-+				return s.memGPU
-+			}
- 			return s.vramByDevice[gpu.Name]
- 		}
- 	}
 diff --git a/ml/device.go b/ml/device.go
-index 5dee4fe6..186fe424 100644
+index c9255088..d32ce408 100644
 --- a/ml/device.go
 +++ b/ml/device.go
-@@ -709,6 +709,18 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
+@@ -439,6 +439,18 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
  			return
  		}
  		envVar = "GGML_VK_VISIBLE_DEVICES"

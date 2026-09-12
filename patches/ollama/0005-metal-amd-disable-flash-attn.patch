@@ -1,8 +1,8 @@
 diff --git a/llm/llama_server.go b/llm/llama_server.go
-index 1340d663..261a4424 100644
+index fc3edfbb..6cc86085 100644
 --- a/llm/llama_server.go
 +++ b/llm/llama_server.go
-@@ -602,8 +602,38 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
+@@ -593,8 +593,38 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
  	return params
  }
  
@@ -41,3 +41,20 @@ index 1340d663..261a4424 100644
  	enabled := envconfig.FlashAttention(false)
  	userSet := enabled == envconfig.FlashAttention(true)
  	if userSet {
+@@ -2873,6 +2903,16 @@ func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
+ 	// --list-devices stdout, which matches the buffer log prefix.
+ 	for _, gpu := range s.gpus {
+ 		if gpu.DeviceID == id {
++			// ollama-metal: when a runner is pinned to a single device, all of
++			// its GPU footprint belongs to that device. A pinned Metal runner
++			// (GGML_METAL_DEVICE_INDEX, g_devices=1) always labels its buffers
++			// "MTL0" regardless of which physical die it bound to, so the
++			// discovery name (e.g. "MTL2") won't match s.vramByDevice and the
++			// per-name lookup returns 0 -- causing the scheduler to double-book
++			// one die. Attribute the whole GPU footprint to the sole device.
++			if len(s.gpus) == 1 {
++				return s.memGPU
++			}
+ 			return s.vramByDevice[gpu.Name]
+ 		}
+ 	}

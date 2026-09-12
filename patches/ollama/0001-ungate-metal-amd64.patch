@@ -1,8 +1,8 @@
 diff --git a/cmake/local.cmake b/cmake/local.cmake
-index 116e7526..27f57d7d 100644
+index 7e9f685c..9d753986 100644
 --- a/cmake/local.cmake
 +++ b/cmake/local.cmake
-@@ -503,7 +503,12 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
+@@ -647,7 +647,12 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
      endif()
  
      set(_cpu_args)

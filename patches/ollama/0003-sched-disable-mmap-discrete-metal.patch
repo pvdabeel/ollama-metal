@@ -1,8 +1,8 @@
 diff --git a/server/sched.go b/server/sched.go
-index be1b222b..d3c115b6 100644
+index c1a95c33..cd24663d 100644
 --- a/server/sched.go
 +++ b/server/sched.go
-@@ -1166,6 +1166,19 @@ func disableMmapDefaultReason(goos string, opts api.Options, gpus []ml.DeviceInf
+@@ -1165,6 +1165,19 @@ func disableMmapDefaultReason(goos string, opts api.Options, gpus []ml.DeviceInf
  	if goos == "windows" && hasDeviceLibrary(gpus, "cuda") {
  		return "windows_cuda"
  	}

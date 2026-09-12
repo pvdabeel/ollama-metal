@@ -1,8 +1,8 @@
 diff --git a/discover/runner.go b/discover/runner.go
-index f0cfe8fc..16ffe776 100644
+index 2c533c33..ffcff6eb 100644
 --- a/discover/runner.go
 +++ b/discover/runner.go
-@@ -255,7 +255,15 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
+@@ -264,7 +264,15 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
  
  		bootstrapped = true
  	} else {

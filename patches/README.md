@@ -70,13 +70,15 @@ Infinity Fabric; the only stock P2P knobs are CUDA-specific.)
   fallback in `set_tensor`/`get_tensor` for unaligned host pointers (stock
   asserts + aborts on discrete GPUs); **multi-die selection** — `device_init`
   binds the ggml device to `MTLCopyAllDevices()[idx]` (idx from the ggml slot or
-  `GGML_METAL_DEVICE_INDEX`) instead of always the system default device; and the
+  `GGML_METAL_DEVICE_INDEX`) instead of always the system default device; the
   **cross-die copy** in `ggml_metal_buffer_cpy_tensor`: host-mediated by default
   (Phase C), or — when `GGML_METAL_PEER_ENABLE` is set and both dies share a
   Metal peer group — a direct Infinity Fabric peer blit via a remote buffer view
-  (Phase D, opt-in, see status above).
+  (Phase D, opt-in, see status above); and the opt-in AMD FA-vec gate
+  (`ggml_metal_set_force_fa_vec`, `GGML_METAL_AMD_FA`).
 - `03-metal-tiled-mul-mm.patch` — **perf (optional).** Threadgroup-tiled
-  `mul_mm`/dispatch for non-UMA; ~12x faster prompt eval. NOT required for
+  `mul_mm`/dispatch for non-UMA (`kernels/mul_mm.metal` +
+  `ggml_metal_op_mul_mat_use_mm`); ~12x faster prompt eval. NOT required for
   correctness (stock `mul_mv` is numerically correct here too).
 - `04-metal-multi-die-registration.patch` — **multi-die.** Default the
   registered backend-device count to the physical Metal device count

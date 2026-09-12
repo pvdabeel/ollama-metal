@@ -1,23 +1,32 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index 4a3ebb556..ccd32281f 100644
+index ae4871d35..b548b9e91 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -273,6 +273,10 @@ void ggml_metal_device_free(ggml_metal_device_t dev);
+@@ -301,6 +301,19 @@ void ggml_metal_device_free(ggml_metal_device_t dev);
  
- ggml_metal_device_t ggml_metal_device_get(int device);
+ ggml_metal_device_t ggml_metal_device_get(int device, int n_devices);
  
 +// ollama-metal: number of physical Metal devices in the system (MTLCopyAllDevices
 +// count). Used to default the registered backend-device count to one per die.
 +int ggml_metal_device_count(void);
 +
++// ollama-metal: on discrete AMD GPUs the matrix ("mm") flash-attention kernel
++// cannot run (it needs simdgroup_matrix, which these GPUs lack) but the
++// reduction-based ("vec") kernel can. When set, the ops layer forces the vec
++// FA path for every batch size instead of only small (decode) batches. The
++// value is a device capability (has_simdgroup_reduction && !has_simdgroup_mm)
++// recorded during supports_op; it is uniform across our identical dies.
++void ggml_metal_set_force_fa_vec(int v);
++int  ggml_metal_get_force_fa_vec(void);
++
  void * ggml_metal_device_get_obj  (ggml_metal_device_t dev); // id<MTLDevice>
  void * ggml_metal_device_get_queue(ggml_metal_device_t dev); // id<MTLCommandQueue>
  
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index a1003b3ac..9f998b586 100644
+index 4d58dc821..75ce6476b 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -913,9 +913,24 @@ ggml_backend_reg_t ggml_backend_metal_reg(void) {
+@@ -968,9 +968,24 @@ ggml_backend_reg_t ggml_backend_metal_reg(void) {
          static std::mutex mutex;
          std::lock_guard<std::mutex> lock(mutex);
  

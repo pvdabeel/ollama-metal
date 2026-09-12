@@ -1,32 +1,50 @@
-diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index e2ce56e9e..9aaec3b1f 100644
---- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
-+++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -2162,9 +2162,16 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
-     } else if (
-         !ggml_is_transposed(op->src[0]) &&
-         !ggml_is_transposed(op->src[1]) &&
--        // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
--        // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
--        props_dev->has_simdgroup_mm && ne00 >= 64 && ne11 > ne11_mm_min) {
-+        // ollama-metal: enable the threadgroup-tiled mul_mm kernel on discrete
-+        // AMD GPUs (no unified memory) in addition to A14+/M1+ SoCs. This is a
-+        // PERFORMANCE win for batch/prompt processing only (~12x faster prompt
-+        // eval on the W6800X vs the stock mul_mv fallback); it is NOT required
-+        // for correctness (concurrency-off in ggml-metal-context.m fixes the
-+        // garbage output, and stock mul_mv is numerically correct here too).
-+        // Mirrors iRon-Llama allow_mm_kernels = has_simdgroup_mm || !UMA.
-+        // Small ne11 (incl. ne11==1 decode) still uses the mul_mv path, which
-+        // is why single-token generation is unaffected by this kernel.
-+        (props_dev->has_simdgroup_mm || !props_dev->has_unified_memory) && ne00 >= 64 && ne11 > ne11_mm_min) {
-         //GGML_LOG_INFO("matrix: ne00 = %6d, ne01 = %6d, ne02 = %6d, ne11 = %6d, ne12 = %6d\n", ne00, ne01, ne02, ne11, ne12);
+diff --git a/ggml/src/ggml-metal/ggml-metal-common.cpp b/ggml/src/ggml-metal/ggml-metal-common.cpp
+index 6f1638a11..b94a41c24 100644
+--- a/ggml/src/ggml-metal/ggml-metal-common.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-common.cpp
+@@ -6,13 +6,22 @@
  
-         // some Metal matrix data types require aligned pointers
-diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 2bd310d94..521871922 100644
---- a/ggml/src/ggml-metal/ggml-metal.metal
-+++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -9554,6 +9554,7 @@ kernel void kernel_mul_mm(
+ #include <vector>
+ 
+-bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
++bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm, bool has_unified_memory) {
+     const int64_t ne00 = op->src[0]->ne[0];
+     const int64_t ne11 = op->src[1]->ne[1];
+ 
++    // ollama-metal: enable the threadgroup-tiled mul_mm kernel on discrete
++    // AMD GPUs (no unified memory) in addition to A14+/M1+ SoCs. This is a
++    // PERFORMANCE win for batch/prompt processing only (~12x faster prompt
++    // eval on the W6800X vs the stock mul_mv fallback); it is NOT required
++    // for correctness (concurrency-off in ggml-metal-context.m fixes the
++    // garbage output, and stock mul_mv is numerically correct here too).
++    // Mirrors iRon-Llama allow_mm_kernels = has_simdgroup_mm || !UMA.
++    // Small ne11 (incl. ne11==1 decode) still uses the mul_mv path, which
++    // is why single-token generation is unaffected by this kernel.
+     return !ggml_is_transposed(op->src[0]) &&
+            !ggml_is_transposed(op->src[1]) &&
+-           has_simdgroup_mm && ne00 >= 64 && ne11 > 8;
++           (has_simdgroup_mm || !has_unified_memory) && ne00 >= 64 && ne11 > 8;
+ }
+ 
+ bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
+diff --git a/ggml/src/ggml-metal/ggml-metal-common.h b/ggml/src/ggml-metal/ggml-metal-common.h
+index 66abdb52e..2933885e6 100644
+--- a/ggml/src/ggml-metal/ggml-metal-common.h
++++ b/ggml/src/ggml-metal/ggml-metal-common.h
+@@ -48,7 +48,7 @@ bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const struct ggml_tensor * ten
+ void ggml_graph_optimize(struct ggml_cgraph * gf);
+ 
+ // mat-mat vs mat-vec dispatch; used by both supports_op and ggml_metal_op_mul_mat*
+-bool ggml_metal_op_mul_mat_use_mm   (const struct ggml_tensor * op, bool has_simdgroup_mm);
++bool ggml_metal_op_mul_mat_use_mm   (const struct ggml_tensor * op, bool has_simdgroup_mm, bool has_unified_memory);
+ bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
+ 
+ #ifdef __cplusplus
+diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
+index ee848eed6..2d8829fb1 100644
+--- a/ggml/src/ggml-metal/kernels/mul_mm.metal
++++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
+@@ -156,6 +156,7 @@ kernel void kernel_mul_mm(
          uint3  tgpig[[threadgroup_position_in_grid]],
          ushort tiitg[[thread_index_in_threadgroup]],
          ushort sgitg[[simdgroup_index_in_threadgroup]]) {
@@ -34,7 +52,7 @@ index 2bd310d94..521871922 100644
  
      threadgroup S0 * sa = (threadgroup S0 *)(shmem);
      threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
-@@ -9597,13 +9598,16 @@ kernel void kernel_mul_mm(
+@@ -199,13 +200,16 @@ kernel void kernel_mul_mm(
          + args.nb11*(r1 + lr1)
          + args.nb10*iy);
  
@@ -58,7 +76,7 @@ index 2bd310d94..521871922 100644
      }
  
      for (int loop_k = 0; loop_k < args.ne00; loop_k += NK) {
-@@ -9612,18 +9616,11 @@ kernel void kernel_mul_mm(
+@@ -214,18 +218,11 @@ kernel void kernel_mul_mm(
              threadgroup_barrier(mem_flags::mem_threadgroup);
  
              // no need for dequantization
@@ -81,7 +99,7 @@ index 2bd310d94..521871922 100644
              }
          } else {
              S0_4x4 temp_a;
-@@ -9631,50 +9628,20 @@ kernel void kernel_mul_mm(
+@@ -233,50 +230,20 @@ kernel void kernel_mul_mm(
  
              threadgroup_barrier(mem_flags::mem_threadgroup);
  
@@ -138,7 +156,7 @@ index 2bd310d94..521871922 100644
          }
  
          il = (il + 2 < nl) ? il + 2 : il % 2;
-@@ -9684,72 +9651,29 @@ kernel void kernel_mul_mm(
+@@ -286,72 +253,29 @@ kernel void kernel_mul_mm(
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
  
