@@ -1,14 +1,11 @@
 # Flash Attention on discrete AMD (Metal) — status & findings
 
-> **Status (Ollama v0.34.0 / llama.cpp b10760):** FA on discrete AMD remains
-> **opt-in and OFF by default**. The bump from b10353 forward-ported patch 05
-> onto the split `kernels/` Metal sources and the new FA-vec tuner; the
-> vec-kernel correctness findings below were characterised on `b10091` and were
-> **not** re-validated on `b10760` (the default coherent CPU-fallback path is
-> what the bump was validated against). Upstream added a quantized-KV
-> dequant-to-F16 preprocess (`#27390`) and an Apple-SKU FA-vec tuning table —
-> both still require `has_simdgroup_mm`, so they do not help AMD. Set
-> `GGML_METAL_AMD_FA=1` only for kernel work.
+> **Status (Ollama v0.34.1 / llama.cpp b10864):** FA on discrete AMD remains
+> **opt-in and OFF by default**. The bump from b10760 forward-ported patch 05
+> unchanged in intent; the vec-kernel correctness findings below were
+> characterised on `b10091` and were **not** re-validated on `b10864` (the
+> default coherent CPU-fallback path is what the bump was validated against).
+> Set `GGML_METAL_AMD_FA=1` only for kernel work.
 
 Goal: run attention on the GPU (instead of the CPU fallback) on the AMD
 W6800X dies, which unlocks the biggest documented wins on this hardware:

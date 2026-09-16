@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index bc8b3c8d4..2e1409c95 100644
+index 3db8bca43..4f00ea2f9 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -12,6 +12,7 @@
@@ -36,11 +36,11 @@ index bc8b3c8d4..2e1409c95 100644
      // use vec kernel if the batch size is small and if the head size is supported
      return (ne01 < 20) && (ne00 % 32 == 0);
  }
-@@ -3455,7 +3466,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3578,7 +3589,20 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
          // workgroups
          // each workgroup handles nsg*nkpsg cache values
          int32_t nwg = 1;
--        if (false) {
+-        if (use_sparse) {
 +        if (ggml_metal_get_force_fa_vec()) {
 +            // ollama-metal: discrete AMD GPUs produce garbage with the default
 +            // multi-workgroup KV split + vec_reduce combine path. Use a single
@@ -54,7 +54,7 @@ index bc8b3c8d4..2e1409c95 100644
 +            const char * e_nwg = getenv("GGML_METAL_FA_VEC_NWG");
 +            if (e_nsg) { nsg = atoi(e_nsg); if (nsg < 1) nsg = 1; }
 +            if (e_nwg) { nwg = atoi(e_nwg); if (nwg < 1) nwg = 1; }
-+        } else if (false) {
-             // for small KV caches, we could launch a single workgroup and write the results directly to dst/
-             // however, this does not lead to significant improvement, so disabled
-             nwg = 1;
++        } else if (use_sparse) {
+             if (ne01 > 32) {
+                 // large sparse batch
+                 nwg = 1;
