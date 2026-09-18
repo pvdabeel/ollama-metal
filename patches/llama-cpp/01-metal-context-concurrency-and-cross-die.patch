@@ -1,13 +1,12 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index e1129db30..72b3d9103 100644
+index bf4fe2dcd..17fc8ca83 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
-@@ -139,7 +139,22 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
+@@ -137,7 +137,21 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
+ 
          res->d_queue = dispatch_queue_create("ggml-metal", DISPATCH_QUEUE_CONCURRENT);
  
-         res->use_fusion      = getenv("GGML_METAL_FUSION_DISABLE") == nil;
 -        res->use_concurrency = getenv("GGML_METAL_CONCURRENCY_DISABLE") == nil;
-+
 +        // ollama-metal: the Metal backend's concurrent command-buffer dispatch
 +        // (commandBufferWithUnretainedReferences + backend-managed memory barriers)
 +        // produces numerically WRONG results on discrete AMD GPUs (no unified
@@ -26,7 +25,7 @@ index e1129db30..72b3d9103 100644
  
          {
              const char * val = getenv("GGML_METAL_GRAPH_DEBUG");
-@@ -414,6 +429,26 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
+@@ -414,6 +428,26 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
  
  bool ggml_metal_cpy_tensor_async(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, const struct ggml_tensor * src, struct ggml_tensor * dst) {
      @autoreleasepool {
