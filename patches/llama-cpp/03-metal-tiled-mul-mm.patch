@@ -1,10 +1,10 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-common.cpp b/ggml/src/ggml-metal/ggml-metal-common.cpp
-index 6f1638a11..b94a41c24 100644
+index 9c0b9474c..e6db76338 100644
 --- a/ggml/src/ggml-metal/ggml-metal-common.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-common.cpp
-@@ -6,13 +6,22 @@
- 
- #include <vector>
+@@ -25,13 +25,22 @@ bool ggml_metal_op_mul_mat_use_fwht(const struct ggml_tensor * op) {
+            ggml_metal_fwht_supported_size(op->src[1]->ne[0]);
+ }
  
 -bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
 +bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm, bool has_unified_memory) {
@@ -28,20 +28,20 @@ index 6f1638a11..b94a41c24 100644
  
  bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
 diff --git a/ggml/src/ggml-metal/ggml-metal-common.h b/ggml/src/ggml-metal/ggml-metal-common.h
-index 66abdb52e..2933885e6 100644
+index e6a28d032..ba5ed413d 100644
 --- a/ggml/src/ggml-metal/ggml-metal-common.h
 +++ b/ggml/src/ggml-metal/ggml-metal-common.h
-@@ -48,7 +48,7 @@ bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const struct ggml_tensor * ten
- void ggml_graph_optimize(struct ggml_cgraph * gf);
+@@ -49,7 +49,7 @@ void ggml_graph_optimize(struct ggml_cgraph * gf);
  
  // mat-mat vs mat-vec dispatch; used by both supports_op and ggml_metal_op_mul_mat*
+ bool ggml_metal_op_mul_mat_use_fwht (const struct ggml_tensor * op);
 -bool ggml_metal_op_mul_mat_use_mm   (const struct ggml_tensor * op, bool has_simdgroup_mm);
 +bool ggml_metal_op_mul_mat_use_mm   (const struct ggml_tensor * op, bool has_simdgroup_mm, bool has_unified_memory);
  bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm);
  
  #ifdef __cplusplus
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
-index ee848eed6..2d8829fb1 100644
+index 71d991149..a5555626e 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
 @@ -156,6 +156,7 @@ kernel void kernel_mul_mm(

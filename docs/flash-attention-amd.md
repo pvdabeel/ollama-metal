@@ -1,9 +1,9 @@
 # Flash Attention on discrete AMD (Metal) — status & findings
 
-> **Status (Ollama v0.34.3 / llama.cpp b10969):** FA on discrete AMD remains
+> **Status (Ollama v0.34.4 / llama.cpp b11081):** FA on discrete AMD remains
 > **opt-in and OFF by default**. The bump from b10864 forward-ported patch 05
 > unchanged in intent; the vec-kernel correctness findings below were
-> characterised on `b10091` and were **not** re-validated on `b10969` (the
+> characterised on `b10091` and were **not** re-validated on `b11081` (the
 > default coherent CPU-fallback path is what the bump was validated against).
 > Set `GGML_METAL_AMD_FA=1` only for kernel work.
 
