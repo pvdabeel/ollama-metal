@@ -38,7 +38,7 @@ Two files at the repo root pin exactly what we patch against:
 - `LLAMA_CPP_VERSION`  - the upstream llama.cpp tag Ollama fetches (currently
   `b11081`). This is the tree our kernel patch applies to.
 - `OLLAMA_VERSION`     - the Ollama tag + commit we integrate with (currently
-  `v0.34.4` / `b2da9e46...`).
+  `v0.35.0` / `cc406939...`).
 
 These MUST mirror the pins inside the matching Ollama release:
 - Ollama's own `LLAMA_CPP_VERSION` file is the source of truth for the
