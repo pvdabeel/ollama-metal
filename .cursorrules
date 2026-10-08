@@ -36,9 +36,9 @@ AMD dies, and adds multi-die support.
 
 Two files at the repo root pin exactly what we patch against:
 - `LLAMA_CPP_VERSION`  - the upstream llama.cpp tag Ollama fetches (currently
-  `b11232`). This is the tree our kernel patch applies to.
+  `b11351`). This is the tree our kernel patch applies to.
 - `OLLAMA_VERSION`     - the Ollama tag + commit we integrate with (currently
-  `v0.35.1` / `b0c1ca4f...`).
+  `v0.40.1` / `cf2a313a...`).
 
 These MUST mirror the pins inside the matching Ollama release:
 - Ollama's own `LLAMA_CPP_VERSION` file is the source of truth for the
@@ -52,7 +52,7 @@ These MUST mirror the pins inside the matching Ollama release:
   (`ollama/llama/compat/`) that shims published GGUF blobs.
 - Env override `OLLAMA_LLAMA_CPP_SOURCE=<dir>` makes Ollama build against a
   LOCAL llama.cpp tree AND skips the compat patch. This is our injection point:
-  we point Ollama at a patched local checkout of `b11232`.
+  we point Ollama at a patched local checkout of `b11351`.
 
 amd64 macOS build entrypoint: `ollama/scripts/build_darwin.sh` (the
 `ARCH=amd64` branch, `CMAKE_ARCH=x86_64`). It currently builds `ggml-cpu` +

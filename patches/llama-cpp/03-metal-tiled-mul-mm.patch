@@ -41,7 +41,7 @@ index 6b5a1883f..026522397 100644
  
  #ifdef __cplusplus
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
-index a25838f92..21bde6580 100644
+index 9d262da1d..46ef83fe2 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
 @@ -157,6 +157,7 @@ kernel void kernel_mul_mm(
@@ -94,8 +94,8 @@ index a25838f92..21bde6580 100644
 -
 -                const short ib = 8*sx + sy;
 -
--                *(sa + 64*ib + 8*ly + lx) = loop_k + 16*il + i < args.ne00 ? *((device T0 *) x + i) : 0;
-+                *(sa + (tiitg/NL0)*NK + 16*il0 + i) = loop_k + 16*il + i < args.ne00 ? *((device T0 *) x + i) : 0;
+-                *(sa + 64*ib + 8*ly + lx) = loop_k + 16*il + i < args.ne00 ? (S0) *((device T0 *) x + i) : 0;
++                *(sa + (tiitg/NL0)*NK + 16*il0 + i) = loop_k + 16*il + i < args.ne00 ? (S0) *((device T0 *) x + i) : 0;
              }
          } else {
              S0_4x4 temp_a;

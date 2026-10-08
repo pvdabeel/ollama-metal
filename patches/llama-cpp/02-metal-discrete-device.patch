@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 5654c5004..eed9aa006 100644
+index 8a74550d1..67216c996 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -313,8 +313,15 @@ static bool ggml_metal_library_compile_all(
+@@ -327,8 +327,15 @@ static bool ggml_metal_library_compile_all(
      dispatch_group_t group = dispatch_group_create();
      dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
  
@@ -19,7 +19,7 @@ index 5654c5004..eed9aa006 100644
  
              const int64_t t0 = ggml_time_us();
  
-@@ -354,9 +361,16 @@ static bool ggml_metal_library_compile_all(
+@@ -368,9 +375,16 @@ static bool ggml_metal_library_compile_all(
              }
  
              res->objs[kind] = lib;
@@ -38,7 +38,7 @@ index 5654c5004..eed9aa006 100644
      dispatch_release(group);
  
      const bool ok = !atomic_load(&any_failure);
-@@ -1092,6 +1106,20 @@ const char * ggml_metal_device_id_token(enum ggml_metal_device_id id) {
+@@ -1106,6 +1120,20 @@ const char * ggml_metal_device_id_token(enum ggml_metal_device_id id) {
      return "GGML_METAL_DEVICE_GENERIC";
  }
  
@@ -59,7 +59,7 @@ index 5654c5004..eed9aa006 100644
  ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
      ggml_metal_device_t dev = calloc(1, sizeof(struct ggml_metal_device));
  
-@@ -1099,7 +1127,33 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1113,7 +1141,33 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
  
      @autoreleasepool {
          if (dev->mtl_device == nil) {
@@ -94,7 +94,7 @@ index 5654c5004..eed9aa006 100644
  
              if (dev->mtl_device) {
                  dev->mtl_queue = [dev->mtl_device newCommandQueue];
-@@ -1111,13 +1165,26 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1125,13 +1179,26 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
  
                  dev->props.device = device;
  
@@ -124,7 +124,7 @@ index 5654c5004..eed9aa006 100644
  
                  dev->props.has_simdgroup_mm = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
                  dev->props.has_unified_memory = dev->mtl_device.hasUnifiedMemory;
-@@ -1285,6 +1352,13 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1299,6 +1366,13 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
                              val ? atoi(val) : 0);
                  }
  
@@ -138,7 +138,7 @@ index 5654c5004..eed9aa006 100644
                  snprintf(dev->props.name, sizeof(dev->props.name), "%s%d", "MTL", device);
                  const char * gpu_name = [[dev->mtl_device name] UTF8String];
                  if (n_devices > 1) {
-@@ -1294,9 +1368,19 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
+@@ -1308,9 +1382,19 @@ ggml_metal_device_t ggml_metal_device_init(int device, int n_devices) {
                      snprintf(dev->props.desc, sizeof(dev->props.desc), "%s", gpu_name);
                  }
  
@@ -161,7 +161,7 @@ index 5654c5004..eed9aa006 100644
                  }
  
                  if (dev->props.use_residency_sets) {
-@@ -1389,6 +1473,18 @@ void * ggml_metal_device_get_queue(ggml_metal_device_t dev) {
+@@ -1405,6 +1489,18 @@ void * ggml_metal_device_get_queue(ggml_metal_device_t dev) {
  }
  
  ggml_metal_library_t ggml_metal_device_get_library(ggml_metal_device_t dev) {
@@ -180,7 +180,7 @@ index 5654c5004..eed9aa006 100644
      return dev->library;
  }
  
-@@ -1520,11 +1616,34 @@ static bool ggml_metal_supports_mul_mat_op(
+@@ -1536,11 +1632,34 @@ static bool ggml_metal_supports_mul_mat_op(
      return mm_path;
  }
  
@@ -215,7 +215,7 @@ index 5654c5004..eed9aa006 100644
      if (!has_bfloat) {
          if (op->type == GGML_TYPE_BF16) {
              return false;
-@@ -1753,6 +1872,27 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1768,6 +1887,27 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                  default:
                      return false;
              }
@@ -243,8 +243,8 @@ index 5654c5004..eed9aa006 100644
              return has_simdgroup_mm; // TODO: over-restricted for vec-kernels
          case GGML_OP_LIGHTNING_INDEXER:
              if (op->src[0]->ne[0] != OP_LIGHTNING_INDEXER_DK ||
-@@ -1834,7 +1974,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
-         case GGML_OP_MUL_MAT:
+@@ -1852,7 +1992,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+             }
              return ggml_metal_supports_mul_mat_op(
                      has_simdgroup_reduction, op, true,
 -                    ggml_metal_op_mul_mat_use_mm(op, has_simdgroup_mm));
@@ -252,7 +252,7 @@ index 5654c5004..eed9aa006 100644
          case GGML_OP_MUL_MAT_ID:
              return ggml_metal_supports_mul_mat_op(
                      has_simdgroup_reduction, op, false,
-@@ -2324,7 +2464,17 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
+@@ -2342,7 +2482,17 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
                                                                options:MTLResourceStorageModeShared
                                                            deallocator:nil];
  
@@ -271,7 +271,7 @@ index 5654c5004..eed9aa006 100644
  
          // dst
          struct ggml_metal_buffer_id bid_dst = ggml_metal_buffer_get_id(buf, tensor);
-@@ -2381,7 +2531,17 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
+@@ -2401,7 +2551,17 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
                                                                options:MTLResourceStorageModeShared
                                                            deallocator:nil];
  
@@ -290,18 +290,17 @@ index 5654c5004..eed9aa006 100644
  
          id<MTLCommandBuffer> cmd_buf = [buf->dev->mtl_queue commandBufferWithUnretainedReferences];
  
-@@ -2399,6 +2559,10 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
- 
+@@ -2420,6 +2580,9 @@ void ggml_metal_buffer_get_tensor(ggml_metal_buffer_t buf, const struct ggml_ten
          [cmd_buf commit];
          [cmd_buf waitUntilCompleted];
-+
+ 
 +        if (dst_bounce) {
 +            memcpy(data, [buf_dst contents], size);
 +        }
+         [buf_dst release];
      }
  }
- 
-@@ -2413,6 +2577,79 @@ bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml
+@@ -2435,6 +2598,79 @@ bool ggml_metal_buffer_cpy_tensor(ggml_metal_buffer_t buf_dst, const struct ggml
          return true;
      }
  
