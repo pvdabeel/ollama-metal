@@ -1,6 +1,6 @@
 # Flash Attention on discrete AMD (Metal) — status & findings
 
-> **Status (Ollama v0.40.5 / llama.cpp b11669):** FA on discrete AMD remains
+> **Status (Ollama v0.40.6 / llama.cpp b11669):** FA on discrete AMD remains
 > **opt-in and OFF by default**. The bump from b10864 forward-ported patch 05
 > unchanged in intent; the vec-kernel correctness findings below were
 > characterised on `b10091` and were **not** re-validated on `b11669` (the
