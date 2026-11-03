@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-common.cpp b/ggml/src/ggml-metal/ggml-metal-common.cpp
-index a00f87c99..b54994453 100644
+index 70fd551e3..94d3c1b65 100644
 --- a/ggml/src/ggml-metal/ggml-metal-common.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-common.cpp
 @@ -32,13 +32,22 @@ bool ggml_metal_op_mul_mat_use_fwht(const struct ggml_tensor * op, size_t max_tg
@@ -41,10 +41,10 @@ index c86d92b9d..1d56c8a26 100644
  
  bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
-index 9d262da1d..46ef83fe2 100644
+index edcc061d5..9df85cc0e 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
-@@ -157,6 +157,7 @@ kernel void kernel_mul_mm(
+@@ -161,6 +161,7 @@ kernel void kernel_mul_mm(
          uint3  tgpig[[threadgroup_position_in_grid]],
          ushort tiitg[[thread_index_in_threadgroup]],
          ushort sgitg[[simdgroup_index_in_threadgroup]]) {
@@ -52,7 +52,7 @@ index 9d262da1d..46ef83fe2 100644
  
      threadgroup S0 * sa = (threadgroup S0 *)(shmem);
      threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
-@@ -200,13 +201,16 @@ kernel void kernel_mul_mm(
+@@ -204,13 +205,16 @@ kernel void kernel_mul_mm(
          + args.nb11*(r1 + lr1)
          + args.nb10*iy);
  
@@ -76,7 +76,7 @@ index 9d262da1d..46ef83fe2 100644
      }
  
      for (int loop_k = 0; loop_k < args.ne00; loop_k += NK) {
-@@ -215,18 +219,11 @@ kernel void kernel_mul_mm(
+@@ -219,18 +223,11 @@ kernel void kernel_mul_mm(
              threadgroup_barrier(mem_flags::mem_threadgroup);
  
              // no need for dequantization
@@ -99,7 +99,7 @@ index 9d262da1d..46ef83fe2 100644
              }
          } else {
              S0_4x4 temp_a;
-@@ -234,50 +231,20 @@ kernel void kernel_mul_mm(
+@@ -238,50 +235,20 @@ kernel void kernel_mul_mm(
  
              threadgroup_barrier(mem_flags::mem_threadgroup);
  
@@ -156,7 +156,7 @@ index 9d262da1d..46ef83fe2 100644
          }
  
          il = (il + 2 < nl) ? il + 2 : il % 2;
-@@ -287,72 +254,29 @@ kernel void kernel_mul_mm(
+@@ -291,72 +258,30 @@ kernel void kernel_mul_mm(
  
          threadgroup_barrier(mem_flags::mem_threadgroup);
  
@@ -201,10 +201,10 @@ index 9d262da1d..46ef83fe2 100644
 -        // if no bounds checks on the output are needed, we can directly write to device memory
 -        device float * C = (device float *) dst +
 -            (r0 + 32*(sgitg &  1)) + \
--            (r1 + 16*(sgitg >> 1)) * args.ne0 + im*args.ne1*args.ne0;
+-            (uint64_t) (r1 + 16*(sgitg >> 1))*args.ne0 + (uint64_t) im*args.ne1*args.ne0;
 -
 -        for (short i = 0; i < 8; i++) {
--            simdgroup_store(mc[i], C + 8*(i%4) + 8*args.ne0*(i/4), args.ne0, 0, false);
+-            simdgroup_store(mc[i], C + 8*(i%4) + (uint64_t) 8*args.ne0*(i/4), args.ne0, 0, false);
 -        }
 -    } else {
 -        // block is smaller than 64x32, we should avoid writing data outside of the matrix
@@ -220,7 +220,7 @@ index 9d262da1d..46ef83fe2 100644
 -
 -        if (sgitg == 0) {
 -            for (int j = tiitg; j < nr1; j += NR1) {
--                device float  * D  = (device float  *) dst + r0 + (r1 + j)*args.ne0 + im*args.ne1*args.ne0;
+-                device float  * D  = (device float  *) dst + r0 + (uint64_t) (r1 + j)*args.ne0 + (uint64_t) im*args.ne1*args.ne0;
 -                device float4 * D4 = (device float4 *) D;
 -
 -                threadgroup float  * C  = temp_str + (j*NR0);
@@ -238,13 +238,14 @@ index 9d262da1d..46ef83fe2 100644
 +    // ollama-metal: direct, bounds-checked store. Each thread writes its own
 +    // 16 outputs (column tx, rows ty*16 + i). dst is laid out as
 +    // dst[row + col*ne0 + batch*ne0*ne1].
-+    device float * dstf = (device float *) dst + im*args.ne1*args.ne0;
++    // uint64_t index math matches upstream (avoids overflow on large batches).
++    device float * dstf = (device float *) dst + (uint64_t) im*args.ne1*args.ne0;
 +    const int gr1 = r1 + tx;                 // global output column (over ne1)
 +    if (gr1 < args.ne1) {
 +        FOR_UNROLL (short i = 0; i < 16; i++) {
 +            const int gr0 = r0 + ty*16 + i;  // global output row (over ne0)
 +            if (gr0 < args.ne0) {
-+                dstf[gr0 + gr1*args.ne0] = acc[i];
++                dstf[gr0 + (uint64_t) gr1*args.ne0] = acc[i];
              }
          }
      }
