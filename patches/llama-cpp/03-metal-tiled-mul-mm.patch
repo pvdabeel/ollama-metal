@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-common.cpp b/ggml/src/ggml-metal/ggml-metal-common.cpp
-index 70fd551e3..94d3c1b65 100644
+index f36312254..94d3c1b65 100644
 --- a/ggml/src/ggml-metal/ggml-metal-common.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-common.cpp
 @@ -32,13 +32,22 @@ bool ggml_metal_op_mul_mat_use_fwht(const struct ggml_tensor * op, size_t max_tg
@@ -22,7 +22,7 @@ index 70fd551e3..94d3c1b65 100644
 +    // is why single-token generation is unaffected by this kernel.
      return !ggml_is_transposed(op->src[0]) &&
             !ggml_is_transposed(op->src[1]) &&
--           has_simdgroup_mm && ne00 >= 64 && ne11 > 8;
+-           has_simdgroup_mm && ne11 > 8 && ne00 >= 32;
 +           (has_simdgroup_mm || !has_unified_memory) && ne00 >= 64 && ne11 > 8;
  }
  
@@ -41,7 +41,7 @@ index c86d92b9d..1d56c8a26 100644
  
  bool ggml_metal_op_mul_mat_use_mma    (const struct ggml_tensor * op);
 diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
-index edcc061d5..9df85cc0e 100644
+index fab720097..650219775 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mm.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
 @@ -161,6 +161,7 @@ kernel void kernel_mul_mm(
